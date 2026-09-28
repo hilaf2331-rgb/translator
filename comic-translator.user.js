@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.4.2
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -475,20 +475,21 @@
 
   // A Google key may be allowed on the Gemini API, on Agent Platform (Vertex AI), or both.
   // Try them in order and remember the one that answers.
-  const GEMINI_ENDPOINTS = [
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    `https://aiplatform.googleapis.com/v1/publishers/google/models/${GEMINI_MODEL}:generateContent`,
+  const geminiEndpoints = (model) => [
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent`,
   ];
-  const KEY_ENDPOINT = 'geminiEndpoint';
+  const KEY_SERVICE = 'geminiService'; // 0 = Gemini API, 1 = Agent Platform
 
-  async function callGemini(apiKey, body) {
-    const saved = await store.get(KEY_ENDPOINT, '');
-    const order = [saved, ...GEMINI_ENDPOINTS.filter((u) => u !== saved)].filter(Boolean);
+  async function callGemini(apiKey, body, model = GEMINI_MODEL) {
+    const urls = geminiEndpoints(model);
+    const saved = Number(await store.get(KEY_SERVICE, 0)) || 0;
+    const order = [saved, 1 - saved];
     let lastErr;
-    for (const url of order) {
+    for (const i of order) {
       try {
-        const res = await callApi(url, { 'x-goog-api-key': apiKey }, body);
-        if (url !== saved) store.set(KEY_ENDPOINT, url);
+        const res = await callApi(urls[i], { 'x-goog-api-key': apiKey }, body);
+        if (i !== saved) store.set(KEY_SERVICE, i);
         return res;
       } catch (err) {
         lastErr = err;
@@ -499,23 +500,26 @@
     throw lastErr;
   }
 
-  async function geminiPiece(piece, apiKey) {
+  // imagePart is either the picture itself (inlineData) or a link Google downloads (fileData).
+  async function geminiRequest(piece, apiKey, imagePart, model = GEMINI_MODEL) {
     const res = await callGemini(
       apiKey,
       {
         contents: [{
           role: 'user',
           parts: [
-            { inlineData: { mimeType: 'image/jpeg', data: piece.data } },
+            imagePart,
             { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
           ],
         }],
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: GEMINI_SCHEMA,
-          thinkingConfig: { thinkingLevel: 'low' },
+          // Gemini 3+ takes a thinking level; 2.5 models take a token budget instead.
+          thinkingConfig: model.startsWith('gemini-2') ? { thinkingBudget: 0 } : { thinkingLevel: 'low' },
         },
-      }
+      },
+      model
     );
     const cand = res.candidates?.[0];
     if (!cand?.content?.parts) return []; // blocked or empty
@@ -529,6 +533,37 @@
         h: ((y1 - y0) / 1000) * piece.h,
         translation,
       }));
+  }
+
+  function geminiPiece(piece, apiKey) {
+    return geminiRequest(piece, apiKey, { inlineData: { mimeType: 'image/jpeg', data: piece.data } });
+  }
+
+  // Last resort for sites whose image server refuses our downloads: hand Gemini the link and
+  // let Google fetch the picture. Newer models refuse outside links, so try ones that accept them.
+  const URL_MODELS = ['gemini-3-flash-preview', 'gemini-2.5-flash'];
+
+  function mimeFromUrl(src) {
+    const ext = (/\.(\w+)(?:[?#]|$)/.exec(new URL(src).pathname) || [])[1]?.toLowerCase();
+    return { png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif' }[ext] || 'image/jpeg';
+  }
+
+  async function translateFromUrl(el, apiKey) {
+    const src = kindOf(el) === 'img' ? el.currentSrc || el.src : bgUrl(el);
+    const { w, h } = naturalSize(el);
+    const piece = { w, h, first: true, last: true };
+    const part = { fileData: { mimeType: mimeFromUrl(src), fileUri: src } };
+    let lastErr;
+    for (const model of URL_MODELS) {
+      try {
+        const bubbles = await geminiRequest(piece, apiKey, part, model);
+        return bubbles.map((b) => ({ x: b.x / w, y: b.y / h, w: b.w / w, h: b.h / h, t: b.translation }));
+      } catch (err) {
+        lastErr = err;
+        if (![400, 403, 404].includes(err.status)) throw err;
+      }
+    }
+    throw lastErr;
   }
 
   // ----- Claude (used when an Anthropic key is pasted) -----
@@ -596,7 +631,18 @@
   async function translateElement(el) {
     const apiKey = await store.get(KEY_API, '');
     if (!apiKey) throw new Error('חסר מפתח API');
-    const bitmap = await loadBitmap(el);
+    let bitmap;
+    try {
+      bitmap = await loadBitmap(el);
+    } catch (err) {
+      if (providerOf(apiKey) !== 'gemini' || kindOf(el) === 'canvas') throw err;
+      setStatus(el, 'האתר חוסם הורדה, מנסה דרך Google…');
+      try {
+        return await translateFromUrl(el, apiKey);
+      } catch (urlErr) {
+        throw new Error(`${err.message} / Google: ${urlErr.status || ''} ${urlErr.message}`.slice(0, 160));
+      }
+    }
     const { pieces, sentW, sentH } = slice(bitmap);
     const out = [];
     for (const piece of pieces) {
