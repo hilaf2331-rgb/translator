@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.7.0
+// @version      1.8.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -65,6 +65,8 @@
   let enabledSites = JSON.parse(await store.get(KEY_SITES, '[]'));
   let enabled = enabledSites.includes(host);
   let cache = JSON.parse(await store.get(KEY_CACHE, '{}'));
+  const KEY_SOFTEN = 'softenSwears';
+  let softenSwears = !!(await store.get(KEY_SOFTEN, false)); // ⚙ → 6
 
   function saveCache() {
     const keys = Object.keys(cache);
@@ -215,7 +217,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -223,6 +225,13 @@
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
+      else if (choice === '6') {
+        softenSwears = !softenSwears;
+        await store.set(KEY_SOFTEN, softenSwears);
+        alert(softenSwears
+          ? 'מעכשיו קללות יתורגמו בעדינות. זה חל על תמונות חדשות; לתרגם מחדש את מה שכבר תורגם: ⚙ ← 2.'
+          : 'מעכשיו קללות יתורגמו כמו במקור. זה חל על תמונות חדשות; לתרגם מחדש את מה שכבר תורגם: ⚙ ← 2.');
+      }
     });
   } else {
     // Frames have no buttons: follow the switch pressed on the main page.
@@ -543,6 +552,10 @@
       `and a natural, fluent ${TARGET_LANG} ` +
       `translation that fits the character's tone (casual speech stays casual). Use proper gender forms in ` +
       `${TARGET_LANG} based on who is speaking and to whom, when it is visible in the art. ` +
+      (softenSwears
+        ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
+        : `Translate profanity, insults and crude slang faithfully, with the same intensity as the original ` +
+          `(natural ${TARGET_LANG} swearing, not softened or censored); this is fiction for an adult reader. `) +
       `Skip bubbles cut off at the very top or bottom edge of the image. ` +
       `If the image is not a comic or has no such text, return an empty list.`
     );
@@ -626,6 +639,12 @@
             { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
           ],
         }],
+        // Adult fiction contains swearing, violence and romance; don't let the adjustable filters
+        // drop whole pages. Google's built-in protections still apply.
+        safetySettings: [
+          'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
+          'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT',
+        ].map((category) => ({ category, threshold: 'BLOCK_NONE' })),
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: GEMINI_SCHEMA,
@@ -636,7 +655,10 @@
       model
     );
     const cand = res.candidates?.[0];
-    if (!cand?.content?.parts) return []; // blocked or empty
+    const blockedBy = res.promptFeedback?.blockReason ||
+      (['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY', 'RECITATION'].includes(cand?.finishReason) && cand.finishReason);
+    if (blockedBy) { piece.blocked = blockedBy; return []; }
+    if (!cand?.content?.parts) return []; // empty
     const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
     return (JSON.parse(text).bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
@@ -734,7 +756,7 @@
         }],
       }
     );
-    if (res.stop_reason === 'refusal') return [];
+    if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     return JSON.parse(text).bubbles || [];
   }
@@ -784,6 +806,8 @@
       }
     }
     addColors(bitmap, out);
+    const blocked = pieces.filter((p) => p.blocked).map((p) => p.blocked);
+    if (blocked.length) out.blocked = `${blocked.length === pieces.length ? 'התמונה נחסמה' : 'חלק מהתמונה נחסם'} על ידי ${providerOf(apiKey) === 'claude' ? 'Claude' : 'Google'} (${blocked[0]})`;
     return out;
   }
 
@@ -981,10 +1005,12 @@
       setStatus(el, 'מתרגם…');
       translateElement(el)
         .then((bubbles) => {
-          cache[key] = { t: Date.now(), b: bubbles };
-          saveCache();
+          if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
+            cache[key] = { t: Date.now(), b: bubbles };
+            saveCache();
+          }
           if (!enabled || state.get(el)?.key !== key) return;
-          setStatus(el, null);
+          setStatus(el, bubbles.blocked || null);
           drawBubbles(el, bubbles);
         })
         .catch((err) => {
