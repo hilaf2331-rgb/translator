@@ -17,6 +17,15 @@
 
 ---
 
+## באיזה דפדפן זה עובד?
+| מכשיר | עובד ✅ | אולי 🟡 (לא נבדק) | לא עובד ❌ |
+|---|---|---|---|
+| אייפון / אייפד | **Safari** + Userscripts | Orion | Chrome, Firefox, Edge, Brave, DuckDuckGo, דפדפן בתוך אפליקציות |
+| אנדרואיד | **Firefox** + Tampermonkey | Lemur, Quetta, Edge | Chrome, Samsung Internet, Opera, Brave, Kiwi |
+| מחשב | Chrome / Edge / Brave / Opera / Firefox + Tampermonkey, Safari במק + Userscripts | | |
+
+בכרום במחשב צריך להפעיל גם **Allow User Scripts** בפרטי התוסף Tampermonkey (`chrome://extensions`).
+
 ## התקנה באייפון (פעם אחת, בערך 10 דקות)
 
 ### שלב 1: מפתח API של Gemini

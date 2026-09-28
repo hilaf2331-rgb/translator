@@ -113,6 +113,7 @@ tr { break-inside: avoid; }
   <div class="toc">
     <b>מה במדריך:</b>
     <ol>
+      <li style="list-style:none;margin-right:-6mm">🌐 באיזה דפדפן זה עובד?</li>
       <li>מפתח של Gemini (המנוע שמתרגם)</li>
       <li>להגן על המפתח ועל הכסף</li>
       <li>האפליקציה Userscripts (אייפון)</li>
@@ -127,6 +128,26 @@ tr { break-inside: avoid; }
     </ol>
   </div>
 </section>
+
+<!-- ============ דפדפנים ============ -->
+<h2>באיזה דפדפן זה עובד?</h2>
+<p>המתרגם הוא <b>תוסף לדפדפן</b>, ולכן הוא עובד רק בדפדפנים שאפשר להתקין בהם תוספים. <b>חשוב: קוראים את הקומיקס באותו דפדפן שבו התקנתם.</b></p>
+<table>
+  <tr><th style="width:22%">מכשיר</th><th style="width:30%">דפדפן</th><th style="width:14%">עובד?</th><th>הערות</th></tr>
+  <tr><td rowspan="4"><b>📱 אייפון / אייפד</b></td><td><b>Safari</b></td><td>✅ כן</td><td><b>הדרך המומלצת</b>, עם Userscripts (שלבים 3–5). זו הדרך שנבדקה בפועל.</td></tr>
+  <tr><td>Orion</td><td>🟡 אולי</td><td>דפדפן שתומך בתוספים של כרום ופיירפוקס. עוד לא נבדק.</td></tr>
+  <tr><td>Chrome, Firefox, Edge, Brave, DuckDuckGo</td><td>❌ לא</td><td>באייפון הם לא תומכים בתוספים.</td></tr>
+  <tr><td>הדפדפן שבתוך טיקטוק / אינסטגרם</td><td>❌ לא</td><td>פותחים את הקישור בספארי.</td></tr>
+  <tr><td rowspan="5"><b>🤖 אנדרואיד</b></td><td><b>Firefox</b></td><td>✅ כן</td><td><b>הדרך המומלצת</b>, עם Tampermonkey (פרק "אנדרואיד").</td></tr>
+  <tr><td>Lemur, Quetta</td><td>🟡 אולי</td><td>דפדפנים שתומכים בתוספים של כרום, כולל Tampermonkey. עוד לא נבדק.</td></tr>
+  <tr><td>Edge</td><td>🟡 אולי</td><td>יש תמיכה חלקית בתוספים. לא בטוח ש-Tampermonkey זמין בו.</td></tr>
+  <tr><td>Chrome, Samsung Internet, Opera, Brave</td><td>❌ לא</td><td>לא תומכים בתוספים מהסוג הזה.</td></tr>
+  <tr><td>Kiwi</td><td>❌ לא</td><td>הדפדפן הפסיק להתעדכן, לא מומלץ.</td></tr>
+  <tr><td rowspan="3"><b>💻 מחשב</b></td><td>Chrome, Edge, Brave, Opera</td><td>✅ כן</td><td>עם התוסף <b>Tampermonkey</b>. בכרום צריך להפעיל גם את <b>"Allow User Scripts"</b> בפרטי התוסף (chrome://extensions ← Tampermonkey ← Details).</td></tr>
+  <tr><td>Firefox</td><td>✅ כן</td><td>עם התוסף <b>Tampermonkey</b>.</td></tr>
+  <tr><td>Safari (מק)</td><td>✅ כן</td><td>עם האפליקציה <b>Userscripts</b> למק, מה-App Store.</td></tr>
+</table>
+<p class="small">✅ = עובד · 🟡 = אמור לעבוד אבל עוד לא נבדק · ❌ = לא עובד. אחרי ההתקנה, בכל הדפדפנים פותחים את אותו קישור של המתרגם (שלב 4).</p>
 
 <!-- ============ שלב 1 ============ -->
 <h2>שלב 1: מפתח של Gemini (המנוע שמתרגם)</h2>
@@ -369,7 +390,7 @@ tr { break-inside: avoid; }
   <li>🔒 <b>המפתח נשמר רק בטלפון שלך</b>, באחסון הפרטי של Userscripts (אייפון) או Tampermonkey (אנדרואיד). הוא לא נשלח לאף אחד חוץ מ-Google, והאתרים שאת גולשת בהם לא יכולים לקרוא אותו.</li>
   <li>🖼️ <b>התמונות נשלחות ל-Google לתרגום</b>, כמו בכל שירות תרגום של תמונות.</li>
   <li>🚫 <b>אם נראה שהמפתח דלף:</b> מוחקים אותו ב-<a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> ויוצרים חדש. לוקח דקה.</li>
-  <li>💻 <b>במחשב:</b> מתקינים את התוסף <b class="ltr">Tampermonkey</b> (בכרום, באדג' או בפיירפוקס) ופותחים את אותו קישור משלב 4.</li>
+  <li>💻 <b>במחשב:</b> מתקינים את התוסף <b class="ltr">Tampermonkey</b> ופותחים את אותו קישור משלב 4. הפרטים בטבלת הדפדפנים בתחילת המדריך.</li>
   <li>🤖 <b>אנדרואיד:</b> רק בפיירפוקס, לא בכרום (ראו פרק "אנדרואיד").</li>
 </ul>
 <div class="warn">
