@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.5.0
+// @version      1.5.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -485,19 +485,20 @@
     const urls = geminiEndpoints(model);
     const saved = Number(await store.get(KEY_SERVICE, 0)) || 0;
     const order = [saved, 1 - saved];
-    let lastErr;
+    let firstErr;
     for (const i of order) {
       try {
         const res = await callApi(urls[i], { 'x-goog-api-key': apiKey }, body);
         if (i !== saved) store.set(KEY_SERVICE, i);
         return res;
       } catch (err) {
-        lastErr = err;
+        firstErr ||= err;
         // Only "this key/API isn't allowed here" is worth trying the other service for.
         if (![401, 403, 404].includes(err.status)) throw err;
       }
     }
-    throw lastErr;
+    // Report the usual service's answer: the other one is often just "not enabled for this key".
+    throw firstErr;
   }
 
   // imagePart is either the picture itself (inlineData) or a link Google downloads (fileData).
@@ -553,17 +554,18 @@
     const { w, h } = naturalSize(el);
     const piece = { w, h, first: true, last: true };
     const part = { fileData: { mimeType: mimeFromUrl(src), fileUri: src } };
-    let lastErr;
+    const errors = [];
     for (const model of URL_MODELS) {
       try {
         const bubbles = await geminiRequest(piece, apiKey, part, model);
         return bubbles.map((b) => ({ x: b.x / w, y: b.y / h, w: b.w / w, h: b.h / h, t: b.translation }));
       } catch (err) {
-        lastErr = err;
-        if (![400, 403, 404].includes(err.status)) throw err;
+        errors.push(`${model}: ${err.status || ''} ${err.message}`);
+        if (![400, 403, 404].includes(err.status)) break;
       }
     }
-    throw lastErr;
+    const err = new Error(errors.join(' | '));
+    throw err;
   }
 
   // ----- Claude (used when an Anthropic key is pasted) -----
@@ -640,7 +642,7 @@
       try {
         return await translateFromUrl(el, apiKey);
       } catch (urlErr) {
-        throw new Error(`${err.message} / Google: ${urlErr.status || ''} ${urlErr.message}`.slice(0, 160));
+        throw new Error(`${err.message} / Google → ${urlErr.message}`.slice(0, 400));
       }
     }
     const { pieces, sentW, sentH } = slice(bitmap);
