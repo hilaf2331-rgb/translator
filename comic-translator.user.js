@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.4.1
+// @version      1.4.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -141,8 +141,9 @@
     });
 
     gearBtn.addEventListener('click', async () => {
+      const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        'הגדרות:\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף',
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף`,
         '1'
       );
       if (choice === '1') askForKey();
