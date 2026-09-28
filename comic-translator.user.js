@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.13.0
+// @version      1.14.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -81,6 +81,12 @@
   let economy = !!(await store.get(KEY_ECONOMY, false));
   const KEY_SOURCE = 'sourceLang';
   let source = SOURCES[Number(await store.get(KEY_SOURCE, 0))] || SOURCES[0];
+  // The reader's notes about the story on this site, e.g. who is male/female (⚙ → 9).
+  const KEY_NOTES = `notes:${host}`;
+  let storyNotes = String(await store.get(KEY_NOTES, ''));
+  // Sexual-content filter: Google's default, or "relaxed" = block only clearly explicit (⚙ → 10).
+  const KEY_SEXFILTER = 'relaxedSexFilter';
+  let relaxedSexFilter = !!(await store.get(KEY_SEXFILTER, false));
   const ECONOMY_EDGE = 1024; // long edge of each piece in economy mode (normal: MAX_EDGE)
   // Settings a model turned out not to accept, remembered so we stop sending them.
   const KEY_UNSUPPORTED = 'unsupportedOptions';
@@ -235,7 +241,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -243,6 +249,30 @@
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
+      else if (choice === '9') {
+        const txt = prompt(
+          'הערות על הסיפור שנשלחות עם כל תמונה באתר הזה, בעברית או באנגלית.\n' +
+          'למשל: "שתי הדמויות הראשיות הן גברים" או "ג\'ין-וו הוא בן, מין-ג\'ה היא בת".\nכדי למחוק, מוחקים הכל ולוחצים אישור:',
+          storyNotes
+        );
+        if (txt !== null) {
+          storyNotes = txt.trim().slice(0, 500);
+          await store.set(KEY_NOTES, storyNotes);
+          alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
+        }
+      }
+      else if (choice === '10') {
+        relaxedSexFilter = !relaxedSexFilter;
+        await store.set(KEY_SEXFILTER, relaxedSexFilter);
+        alert(relaxedSexFilter
+          ? 'מסנן מקל: נחסם רק תוכן מיני מפורש בוודאות גבוהה. תמונות שנחסמו קודם ינסו שוב כשתגללי אליהן.'
+          : 'מסנן רגיל (ברירת המחדל של Google).');
+        for (const el of nearView) {
+          const status = layers.get(el)?.layer.querySelector('.ct-status')?.textContent || '';
+          if (status.includes('נחסם')) state.delete(el); // blocked pages weren't cached: try again
+        }
+        nearView.forEach((el) => check(el));
+      }
       else if (choice === '8') {
         const list = SOURCES.map((x, i) => `${i + 1} – ${x.label}${x === source ? ' ✓' : ''}`).join('\n');
         const i = Number(prompt(`מאיזו שפה לתרגם?\n${list}`, String(SOURCES.indexOf(source) + 1))) - 1;
@@ -594,8 +624,12 @@
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
       `.\nFor each one return ${coords} of the text area inside the bubble (tight around the letters), how many lines the original text is written on, ` +
       `and a natural, fluent ${TARGET_LANG} ` +
-      `translation that fits the character's tone (casual speech stays casual). Use proper gender forms in ` +
-      `${TARGET_LANG} based on who is speaking and to whom, when it is visible in the art. ` +
+      `translation that fits the character's tone (casual speech stays casual). ` +
+      `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
+      `the art (look at the characters in the panel and the bubble tails) and use the matching forms. ` +
+      `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
+      `Use the characters' names and how they are drawn; only when there is no clue at all, use masculine forms. ` +
+      (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. ` : '') +
       (softenSwears
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
         : `Translate profanity, insults and crude slang faithfully, with the same intensity as the original ` +
@@ -709,7 +743,7 @@
       safetySettings: [
         ...['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT']
           .map((category) => ({ category, threshold: 'BLOCK_NONE' })),
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: relaxedSexFilter ? 'BLOCK_ONLY_HIGH' : 'BLOCK_MEDIUM_AND_ABOVE' },
       ],
       generationConfig: {
         responseMimeType: 'application/json',
@@ -1114,7 +1148,7 @@
   // ---------- Watching the page ----------
   let io = null;
   let scanner = null;
-  const nearView = new Set();       // watched elements within ~1.5 screens of the viewport
+  const nearView = new Set();       // watched elements within LOOK_AHEAD of the viewport
   let watched = new WeakSet();
   let bgChecked = new WeakSet();
 
