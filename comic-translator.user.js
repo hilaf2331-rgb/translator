@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.11.0
+// @version      1.12.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -34,7 +34,8 @@
   const MIN_IMG_HEIGHT = 250;
   const MIN_SHOWN_WIDTH = 150;      // ...and images shown smaller than this on screen
   const MAX_EDGE = 1568;            // long edge of each piece sent to the model (px)
-  const CHUNK_OVERLAP = 200;        // overlap between pieces of a tall webtoon strip (px, in sent scale)
+  const CHUNK_OVERLAP = 0.35;       // overlap between pieces of a tall webtoon strip (share of a piece's height),
+                                    // so every bubble is whole in at least one piece
   const MAX_PARALLEL = 10;           // images translated at the same time
   const LOOK_AHEAD = '800%';        // start translating this far (in screens) before you get there
   const CACHE_LIMIT = 400;          // translated images remembered across visits
@@ -558,7 +559,7 @@
       const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
       pieces.push({ y, h, w: sw, data, first: y === 0, last: y + h >= totalH });
       if (y + h >= totalH) break;
-      y += pieceH - CHUNK_OVERLAP;
+      y += pieceH - Math.round(pieceH * CHUNK_OVERLAP);
     }
     return { pieces, sentW: sw, sentH: totalH };
   }
@@ -581,7 +582,7 @@
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
         : `Translate profanity, insults and crude slang faithfully, with the same intensity as the original ` +
           `(natural ${TARGET_LANG} swearing, not softened or censored); this is fiction for an adult reader. `) +
-      `Skip bubbles cut off at the very top or bottom edge of the image. ` +
+      `If a bubble is cut off by the top or bottom edge of the image, still return the box of its visible part. ` +
       `If the image is not a comic or has no such text, return an empty list.`
     );
   }
@@ -836,23 +837,32 @@
     const { pieces, sentW, sentH } = slice(bitmap);
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
+    // A bubble that touches a cut between pieces was only partly visible there (and its
+    // translation may be partial), so prefer the neighbouring piece where it is whole.
+    const whole = [], cut = [];
     for (const [n, piece] of pieces.entries()) {
-      const bubbles = results[n];
-      // Keep a bubble only in the piece that "owns" its center, so overlaps don't duplicate it.
-      const top = piece.first ? 0 : CHUNK_OVERLAP / 2;
-      const bottom = piece.last ? piece.h : piece.h - CHUNK_OVERLAP / 2;
-      for (const b of bubbles) {
-        const cy = b.y + b.h / 2;
-        if (cy < top || cy >= bottom) continue;
-        out.push({
-          x: b.x / sentW,
-          y: (piece.y + b.y) / sentH,
-          w: b.w / sentW,
-          h: b.h / sentH,
-          n: b.lines,
-          t: b.translation,
-        });
+      const margin = Math.max(6, piece.h * 0.02);
+      for (const b of results[n]) {
+        const g = { x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation };
+        const touchesCut = (!piece.first && b.y < margin) || (!piece.last && b.y + b.h > piece.h - margin);
+        (touchesCut ? cut : whole).push(g);
       }
+    }
+    const sameBubble = (a, b) => {
+      const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x));
+      const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+      return ix * iy > 0.4 * Math.min(a.w * a.h, b.w * b.h);
+    };
+    const kept = [];
+    // Whole bubbles first (the same bubble seen whole in two overlapping pieces: keep the larger
+    // box), then cut ones only if nothing whole covers them (a bubble taller than the overlap).
+    for (const list of [whole, cut]) {
+      for (const g of list.sort((a, b) => b.w * b.h - a.w * a.h)) {
+        if (!kept.some((k) => sameBubble(k, g))) kept.push(g);
+      }
+    }
+    for (const g of kept) {
+      out.push({ x: g.x / sentW, y: g.y / sentH, w: g.w / sentW, h: g.h / sentH, n: g.n, t: g.t });
     }
     addColors(bitmap, out);
     const blocked = pieces.filter((p) => p.blocked).map((p) => p.blocked);
