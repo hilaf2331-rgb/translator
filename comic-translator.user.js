@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.8.0
+// @version      1.8.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -639,12 +639,14 @@
             { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
           ],
         }],
-        // Adult fiction contains swearing, violence and romance; don't let the adjustable filters
-        // drop whole pages. Google's built-in protections still apply.
+        // Adult fiction has swearing, insults and violence: don't let those filters drop whole pages.
+        // Sexual content stays on Google's default filter, so explicit pages are simply declined
+        // (shown as "blocked") rather than pushed through.
         safetySettings: [
-          'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
-          'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT',
-        ].map((category) => ({ category, threshold: 'BLOCK_NONE' })),
+          ...['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT']
+            .map((category) => ({ category, threshold: 'BLOCK_NONE' })),
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+        ],
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: GEMINI_SCHEMA,
