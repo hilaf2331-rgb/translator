@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.12.0
+// @version      1.13.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -27,7 +27,14 @@
   // ---------- Settings ----------
   const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AQ.)
   const CLAUDE_MODEL = 'claude-opus-5';     // used with an Anthropic key (starts with sk-ant-)
-  const SOURCE_LANG = 'English';
+  // Language of the comic (⚙ → 8). "auto" lets the model recognise it by itself.
+  const SOURCES = [
+    { lang: null, label: 'אוטומטי – כל שפה' },
+    { lang: 'English', label: 'אנגלית' },
+    { lang: 'Korean', label: 'קוריאנית' },
+    { lang: 'Japanese', label: 'יפנית' },
+    { lang: 'Chinese', label: 'סינית' },
+  ];
   const TARGET_LANG = 'Hebrew';
   const TRANSLATE_SFX = false;      // translate sound effects ("BOOM", "SLAM") too?
   const MIN_IMG_WIDTH = 250;        // ignore small images (icons, avatars, ads)
@@ -72,6 +79,8 @@
   // Economy mode (⚙ → 7): less "thinking" and smaller pictures, roughly half the cost.
   const KEY_ECONOMY = 'economy';
   let economy = !!(await store.get(KEY_ECONOMY, false));
+  const KEY_SOURCE = 'sourceLang';
+  let source = SOURCES[Number(await store.get(KEY_SOURCE, 0))] || SOURCES[0];
   const ECONOMY_EDGE = 1024; // long edge of each piece in economy mode (normal: MAX_EDGE)
   // Settings a model turned out not to accept, remembered so we stop sending them.
   const KEY_UNSUPPORTED = 'unsupportedOptions';
@@ -226,7 +235,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -234,6 +243,11 @@
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
+      else if (choice === '8') {
+        const list = SOURCES.map((x, i) => `${i + 1} – ${x.label}${x === source ? ' ✓' : ''}`).join('\n');
+        const i = Number(prompt(`מאיזו שפה לתרגם?\n${list}`, String(SOURCES.indexOf(source) + 1))) - 1;
+        if (SOURCES[i]) { source = SOURCES[i]; await store.set(KEY_SOURCE, i); alert(`נשמר ✓ שפת המקור: ${source.label}`); }
+      }
       else if (choice === '7') {
         economy = !economy;
         await store.set(KEY_ECONOMY, economy);
@@ -572,7 +586,11 @@
     return (
       `This is a ${piece.w}x${piece.h} px piece of a comic page` +
       (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') +
-      `. Find every speech bubble, thought bubble and narration/caption box that contains ${SOURCE_LANG} text` +
+      `. Find every speech bubble, thought bubble and narration/caption box that contains ` +
+      (source.lang
+        ? `${source.lang} text`
+        : `text in a language other than ${TARGET_LANG} (for example English, Korean, Japanese or Chinese)`) +
+      ` (horizontal or vertical)` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
       `.\nFor each one return ${coords} of the text area inside the bubble (tight around the letters), how many lines the original text is written on, ` +
       `and a natural, fluent ${TARGET_LANG} ` +
