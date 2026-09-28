@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.6.0
+// @version      1.7.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -16,6 +16,8 @@
 // @connect      aiplatform.googleapis.com
 // @connect      api.anthropic.com
 // @connect      workers.dev
+// @connect      fonts.googleapis.com
+// @connect      fonts.gstatic.com
 // @connect      *
 // ==/UserScript==
 
@@ -80,10 +82,10 @@
     .ct-bubble {
       position: absolute; pointer-events: auto; box-sizing: border-box;
       display: flex; align-items: center; justify-content: center; text-align: center;
-      background: #fff; color: #111; border-radius: 12px; padding: 2px 4px; margin: 0;
-      direction: rtl; overflow: hidden; line-height: 1.15; font-weight: 600; letter-spacing: 0;
-      font-family: -apple-system, "Segoe UI", Arial, sans-serif; text-transform: none;
-      box-shadow: 0 0 0 1px rgba(0,0,0,.08); white-space: normal; word-break: break-word;
+      background: #fff; color: #111; border-radius: 10px; padding: 0 2px; margin: 0;
+      direction: rtl; overflow: visible; line-height: 1.22; font-weight: normal; letter-spacing: 0;
+      font-family: "CT Comic", "Varela Round", -apple-system, Arial, sans-serif;
+      text-transform: none; white-space: normal; word-break: break-word; border: 0;
     }
     .ct-bubble.ct-hidden { opacity: 0; }
     .ct-status {
@@ -111,6 +113,74 @@
   style.textContent = CSS;
   const mountStyle = () => (document.head || document.documentElement).appendChild(style);
   mountStyle();
+
+  // ---------- Comic lettering font ----------
+  // Hebrew fonts from Google Fonts, only the letters we need (10–25KB), loaded from bytes so it
+  // works even on sites that block outside fonts. Chosen in ⚙ → 5.
+  const FONTS = [
+    { name: 'Gveret Levin', weight: 400, label: 'גברת לוין – כתב יד של קומיקס' },
+    { name: 'Fredoka', weight: 600, label: 'פרדוקה – עגול ומודגש' },
+    { name: 'Varela Round', weight: 400, label: 'ורלה – עגול ודק' },
+    { name: 'Secular One', weight: 400, label: 'סקולר – מודגש וקלאסי' },
+    { name: 'Rubik', weight: 600, label: 'רוביק – נקי ומודגש' },
+    { name: 'Karantina', weight: 700, label: 'קרנטינה – צר, לבועות קטנות' },
+  ];
+  const KEY_FONT = 'fontChoice';
+  const FONT_FACE = 'CT Comic';
+  const FONT_CHARS = Array.from({ length: 0x5eb - 0x5d0 }, (_, i) => String.fromCharCode(0x5d0 + i)).join('') +
+    '0123456789.,!?…-־\'"״׳*()[]:;~♡♥ ';
+
+  const toB64 = (buf) => {
+    let bin = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  const fromB64 = (b64) => Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)).buffer;
+
+  let fontFace = null;
+  async function loadComicFont() {
+    try {
+      const font = FONTS[Number(await store.get(KEY_FONT, 0))] || FONTS[0];
+      const cacheKey = `font:${font.name}:${font.weight}`;
+      let b64 = await store.get(cacheKey, '');
+      if (!b64) {
+        const family = encodeURIComponent(font.name).replace(/%20/g, '+');
+        const css = await gmRequest({
+          method: 'GET',
+          url: `https://fonts.googleapis.com/css2?family=${family}:wght@${font.weight}&text=${encodeURIComponent(FONT_CHARS)}`,
+        });
+        const url = /url\((https:[^)]+)\)/.exec(css.responseText || '')?.[1];
+        if (!url) return;
+        const res = await gmRequest({ method: 'GET', url, responseType: 'arraybuffer' });
+        let buf = res.response;
+        if (buf instanceof Blob) buf = await buf.arrayBuffer();
+        if (!buf || res.status !== 200) return;
+        b64 = toB64(buf);
+        store.set(cacheKey, b64);
+      }
+      const face = new FontFace(FONT_FACE, fromB64(b64), { weight: '100 900' });
+      await face.load();
+      if (fontFace) document.fonts.delete(fontFace);
+      document.fonts.add(face);
+      fontFace = face;
+      // Re-fit bubbles on screen now that the real letter shapes are known.
+      document.querySelectorAll('.ct-bubble').forEach((el) => delete el.dataset.fitFor);
+      repositionAll();
+    } catch (err) {
+      console.warn('[comic-translator] font', err); // a rounded system font is used instead
+    }
+  }
+
+  async function askForFont() {
+    const cur = Number(await store.get(KEY_FONT, 0)) || 0;
+    const list = FONTS.map((f, i) => `${i + 1} – ${f.label}${i === cur ? ' ✓' : ''}`).join('\n');
+    const choice = prompt(`איזה פונט לתרגום?\n${list}`, String(cur + 1));
+    const i = Number(choice) - 1;
+    if (!(i >= 0 && i < FONTS.length)) return;
+    await store.set(KEY_FONT, i);
+    loadComicFont();
+  }
 
   // ---------- Floating buttons (main page only) ----------
   const ui = document.createElement('div');
@@ -145,13 +215,14 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט`,
         '1'
       );
       if (choice === '1') askForKey();
       else if (choice === '2') { cache = {}; saveCache(); alert('נוקה.'); }
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
+      else if (choice === '5') askForFont();
     });
   } else {
     // Frames have no buttons: follow the switch pressed on the main page.
@@ -203,8 +274,10 @@
     toggleBtn.classList.toggle('ct-on', enabled);
   }
 
+  let fontStarted = false;
   function setEnabled(on) {
     enabled = on;
+    if (on && !fontStarted) { fontStarted = true; loadComicFont(); }
     if (isTop) renderToggle();
     if (enabled) startWatching();
     else stopAll();
@@ -466,7 +539,8 @@
       (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') +
       `. Find every speech bubble, thought bubble and narration/caption box that contains ${SOURCE_LANG} text` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
-      `.\nFor each one return ${coords} of the text area inside the bubble, and a natural, fluent ${TARGET_LANG} ` +
+      `.\nFor each one return ${coords} of the text area inside the bubble (tight around the letters), how many lines the original text is written on, ` +
+      `and a natural, fluent ${TARGET_LANG} ` +
       `translation that fits the character's tone (casual speech stays casual). Use proper gender forms in ` +
       `${TARGET_LANG} based on who is speaking and to whom, when it is visible in the art. ` +
       `Skip bubbles cut off at the very top or bottom edge of the image. ` +
@@ -501,9 +575,10 @@
         type: 'ARRAY',
         items: {
           type: 'OBJECT',
-          required: ['box_2d', 'translation'],
+          required: ['box_2d', 'lines', 'translation'],
           properties: {
             box_2d: { type: 'ARRAY', items: { type: 'INTEGER' } },
+            lines: { type: 'INTEGER' },
             translation: { type: 'STRING' },
           },
         },
@@ -565,11 +640,12 @@
     const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
     return (JSON.parse(text).bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
-      .map(({ box_2d: [y0, x0, y1, x1], translation }) => ({
+      .map(({ box_2d: [y0, x0, y1, x1], lines, translation }) => ({
         x: (x0 / 1000) * piece.w,
         y: (y0 / 1000) * piece.h,
         w: ((x1 - x0) / 1000) * piece.w,
         h: ((y1 - y0) / 1000) * piece.h,
+        lines,
         translation,
       }));
   }
@@ -596,7 +672,7 @@
     for (const model of URL_MODELS) {
       try {
         const bubbles = await geminiRequest(piece, apiKey, part, model);
-        return bubbles.map((b) => ({ x: b.x / w, y: b.y / h, w: b.w / w, h: b.h / h, t: b.translation }));
+        return bubbles.map((b) => ({ x: b.x / w, y: b.y / h, w: b.w / w, h: b.h / h, n: b.lines, t: b.translation }));
       } catch (err) {
         errors.push(`${model}: ${err.status || ''} ${err.message}`);
         if (![400, 403, 404].includes(err.status)) break;
@@ -617,12 +693,13 @@
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['x', 'y', 'w', 'h', 'translation'],
+          required: ['x', 'y', 'w', 'h', 'lines', 'translation'],
           properties: {
             x: { type: 'number' },
             y: { type: 'number' },
             w: { type: 'number' },
             h: { type: 'number' },
+            lines: { type: 'integer' },
             translation: { type: 'string' },
           },
         },
@@ -701,11 +778,45 @@
           y: (piece.y + b.y) / sentH,
           w: b.w / sentW,
           h: b.h / sentH,
+          n: b.lines,
           t: b.translation,
         });
       }
     }
+    addColors(bitmap, out);
     return out;
+  }
+
+  // Take each bubble's own colors, so the translation blends into white bubbles, colored
+  // bubbles and dark caption boxes alike.
+  function addColors(bitmap, bubbles) {
+    const S = 32;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const W = bitmap.width, H = bitmap.height;
+    for (const b of bubbles) {
+      try {
+        // Look at a frame slightly larger than the text box: its edge is the bubble's background.
+        const mx = b.w * W * 0.12 + 3, my = b.h * H * 0.12 + 3;
+        const sx = Math.max(0, b.x * W - mx), sy = Math.max(0, b.y * H - my);
+        const sw = Math.min(W - sx, b.w * W + 2 * mx), sh = Math.min(H - sy, b.h * H + 2 * my);
+        g.clearRect(0, 0, S, S);
+        g.drawImage(bitmap, sx, sy, sw, sh, 0, 0, S, S);
+        const d = g.getImageData(0, 0, S, S).data;
+        const ring = [[], [], []];
+        for (let y = 0; y < S; y++) {
+          for (let x = 0; x < S; x++) {
+            if (x > 1 && x < S - 2 && y > 1 && y < S - 2) continue; // only the outer frame
+            const i = (y * S + x) * 4;
+            ring[0].push(d[i]); ring[1].push(d[i + 1]); ring[2].push(d[i + 2]);
+          }
+        }
+        const [r, gr, bl] = ring.map((ch) => ch.sort((p, q) => p - q)[ch.length >> 1]); // median
+        b.bg = `rgb(${r},${gr},${bl})`;
+        b.fg = 0.299 * r + 0.587 * gr + 0.114 * bl > 140 ? '#111' : '#fff';
+      } catch (_) { /* keep the default white bubble */ }
+    }
   }
 
   // ---------- Overlays ----------
@@ -792,7 +903,11 @@
     const boxH = el.clientHeight, boxW = el.clientWidth;
     if (!boxH || el.dataset.fitFor === boxW + 'x' + boxH) return;
     el.dataset.fitFor = boxW + 'x' + boxH;
-    let size = Math.max(10, Math.min(28, boxH * 0.6));
+    // Aim for the size of the original lettering (same number of lines in the same space),
+    // then shrink only if the Hebrew needs more room.
+    const lines = Number(el.dataset.lines) || 0;
+    let size = lines > 0 ? Math.min(44, (boxH / lines) * 0.95) : Math.min(28, boxH * 0.6);
+    size = Math.max(9, size);
     el.style.fontSize = size + 'px';
     while (size > 8 && (el.scrollHeight > boxH + 1 || el.scrollWidth > boxW + 1)) {
       size -= 1;
@@ -812,6 +927,12 @@
       div.style.width = (b.w + PAD * 2) * 100 + '%';
       div.style.height = (b.h + PAD / 2) * 100 + '%';
       div.textContent = b.t;
+      if (b.n) div.dataset.lines = b.n;
+      const bg = b.bg || '#fff';
+      div.style.background = bg;
+      div.style.color = b.fg || '#111';
+      // Soft edge in the bubble's own color, so no box outline shows.
+      div.style.boxShadow = `0 0 6px 7px ${bg}`;
       // Tap a bubble to peek at the original text.
       div.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); div.classList.toggle('ct-hidden'); });
       inner.appendChild(div);
@@ -964,5 +1085,5 @@
     bgChecked = new WeakSet();
   }
 
-  if (enabled) startWatching();
+  if (enabled) { fontStarted = true; loadComicFont(); startWatching(); }
 })();
