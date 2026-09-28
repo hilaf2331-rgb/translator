@@ -58,12 +58,14 @@
 השרת **חינמי לגמרי**, בלי כרטיס אשראי, ומגדירים אותו פעם אחת. אחרי זה הוא עובד בכל האתרים החוסמים.
 
 1. **חשבון:** נכנסים ל-[dash.cloudflare.com/sign-up](https://dash.cloudflare.com/sign-up), נרשמים בחינם ומאשרים את המייל.
-2. **יצירת השרת:** בתפריט בוחרים **Workers & Pages** ← **Create** ← **Create Worker** (או "Start with Hello World").
-   נותנים לו את השם `comic-helper` ולוחצים **Deploy**.
-3. **הכנסת הקוד:**
-   - פותחים בספארי את [הקוד של השרת](https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/proxy-worker.js), לוחצים לחיצה ארוכה על הטקסט ← **בחר הכל** ← **העתק**.
-   - חוזרים ל-Cloudflare, לוחצים **Edit code**, מוחקים את כל מה שכתוב שם, מדביקים ולוחצים **Deploy**.
-4. **בדיקה:** מעתיקים את הכתובת של השרת (משהו כמו `https://comic-helper.השם-שלך.workers.dev`) ופותחים אותה בספארי.
+2. **יצירת השרת:** בתפריט בוחרים **Workers & Pages** ← **Create** ← **Start with Hello World!**.
+   נותנים לו את השם `comic-helper` ולוחצים **Deploy**. בשלב הזה מופיע "Hello World", וזה בסדר.
+3. **חיבור לקוד ב-GitHub:** באייפון העורך של Cloudflare לא מקבל הדבקה, אז Cloudflare לוקח את הקוד ישירות מהריפו.
+   - בשרת `comic-helper` נכנסים ל-**Settings** ← **Build** ← **Connect** ← **GitHub**.
+   - ב-GitHub מאשרים גישה, ועדיף לבחור **Only select repositories** ← `translator`.
+   - בוחרים את הריפו **translator** ואת הענף **main**, ולוחצים **Connect**.
+   - הבנייה מתחילה כשמשהו משתנה בענף `main`. אפשר לראות אותה בלשונית **Deployments**.
+4. **בדיקה:** בדף הראשי של השרת מופיעה הכתובת שלו (משהו כמו `comic-helper.השם-שלך.workers.dev`). פותחים אותה בספארי עם `https://` בהתחלה.
    אמור להופיע: `Comic Translator image helper is running ✓`
 5. **חיבור לסקריפט:** באתר הקומיקס לוחצים ⚙, כותבים **4**, מדביקים את הכתובת ולוחצים אישור.
 
