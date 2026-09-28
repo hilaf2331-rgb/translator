@@ -103,7 +103,7 @@ tr { break-inside: avoid; }
   <div class="need">
     <b>מה צריך לפני שמתחילים:</b>
     <ul>
-      <li>📱 <b>אייפון</b> עם ספארי (אנדרואיד עוד לא נתמך)</li>
+      <li>📱 <b>אייפון</b> עם ספארי, <b>או אנדרואיד</b> עם פיירפוקס</li>
       <li>📧 <b>חשבון Google</b> (ג'ימייל)</li>
       <li>💳 <b>כרטיס אשראי</b>: התרגום משולם ל-Google לפי שימוש</li>
       <li>⏱️ בערך <b>20–30 דקות</b>, פעם אחת בלבד</li>
@@ -115,9 +115,10 @@ tr { break-inside: avoid; }
     <ol>
       <li>מפתח של Gemini (המנוע שמתרגם)</li>
       <li>להגן על המפתח ועל הכסף</li>
-      <li>האפליקציה Userscripts</li>
-      <li>התקנת המתרגם</li>
-      <li>שימוש ראשון</li>
+      <li>האפליקציה Userscripts (אייפון)</li>
+      <li>התקנת המתרגם (אייפון)</li>
+      <li>שימוש ראשון (אייפון)</li>
+      <li style="list-style:none;margin-right:-6mm">🤖 <b>אנדרואיד:</b> פרק נפרד במקום שלבים 3–5</li>
       <li>איך משתמשים והגדרות</li>
       <li>אם מופיעה שגיאה עם "שרת עזר"</li>
       <li>כמה זה עולה</li>
@@ -175,7 +176,8 @@ tr { break-inside: avoid; }
 <div class="good">✅ עכשיו תקבלי מייל אם ההוצאה מתקרבת לסכום. שימי לב: <b>זו התראה, לא חסימה</b>. היא לא עוצרת את השימוש, רק מודיעה.</div>
 
 <!-- ============ שלב 3 ============ -->
-<h2>שלב 3: האפליקציה Userscripts</h2>
+<h2>שלב 3: האפליקציה Userscripts (אייפון)</h2>
+<div class="tip">🤖 <b>יש לך אנדרואיד?</b> מדלגים על שלבים 3–5 ועוברים לפרק <b>"אנדרואיד"</b> שאחריהם.</div>
 <p><b>Userscripts</b> היא אפליקציה חינמית שמוסיפה לספארי "תוספים קטנים". המתרגם הוא תוסף כזה.</p>
 
 <div class="step"><div class="num">1</div><div class="body">פותחים את <b>App Store</b>, מחפשים <b class="ltr">Userscripts</b> ומורידים את האפליקציה של <b class="ltr">Justin Wasack</b>. היא חינמית.</div></div>
@@ -198,7 +200,7 @@ tr { break-inside: avoid; }
 </div>
 
 <!-- ============ שלב 4 ============ -->
-<h2>שלב 4: התקנת המתרגם</h2>
+<h2>שלב 4: התקנת המתרגם (אייפון)</h2>
 <div class="step"><div class="num">1</div><div class="body">
   פותחים <b>בספארי</b> (לא בכרום ולא בתוך טיקטוק) את הקישור:
   <div class="linkbox"><a href="https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js">https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js</a></div>
@@ -224,7 +226,7 @@ tr { break-inside: avoid; }
 <div class="step"><div class="num">4</div><div class="body">בחלון שנפתח לוחצים <span class="btn">Install</span>. זהו, המתרגם מותקן! 🎉</div></div>
 
 <!-- ============ שלב 5 ============ -->
-<h2>שלב 5: שימוש ראשון</h2>
+<h2>שלב 5: שימוש ראשון (אייפון)</h2>
 <div class="step"><div class="num">1</div><div class="body">נכנסים בספארי לאתר שבו קוראים קומיקס ופותחים פרק.</div></div>
 <div class="step"><div class="num">2</div><div class="body">
   <b>בפעם הראשונה בכל אתר:</b> לוחצים על הפאזל 🧩 ← <b>Userscripts</b>, ובודקים ש-<b>Comic Translator</b> כתוב <b>בלבן</b>.
@@ -256,13 +258,45 @@ tr { break-inside: avoid; }
 
 <div class="warn">⚠️ <b>צריך ללחוץ "תרגם" פעם אחת בכל אתר חדש.</b> ככה המתרגם לא עובד (ולא עולה כסף) באתרים שאינם קומיקס.</div>
 
+<!-- ============ אנדרואיד ============ -->
+<h2>🤖 אנדרואיד (במקום שלבים 3–5)</h2>
+<p>בכרום של אנדרואיד <b>אי אפשר</b> להתקין תוספים, לכן משתמשים ב<b>פיירפוקס</b>, שהוא דפדפן חינמי שתומך בתוספים. את הקומיקס קוראים בפיירפוקס.</p>
+<div class="warn">⚠️ הגרסה לאנדרואיד חדשה ונבדקה פחות. אם משהו לא עובד, שלחו לי הודעה ואתקן.</div>
+
+<h3>א. פיירפוקס ו-Tampermonkey</h3>
+<div class="step"><div class="num">1</div><div class="body">פותחים את <b>Google Play</b>, מחפשים <b class="ltr">Firefox</b> ומתקינים את הדפדפן של <b class="ltr">Mozilla</b>. הוא חינמי.</div></div>
+<div class="step"><div class="num">2</div><div class="body">
+  פותחים את פיירפוקס ולוחצים על <b>שלוש הנקודות ⋮</b>, בדרך כלל למטה או למעלה בצד. בוחרים <span class="btn">תוספות</span> (Add-ons), ואז <span class="btn">מנהל התוספות</span>.
+</div></div>
+<div class="step"><div class="num">3</div><div class="body">
+  מחפשים ברשימה את <b class="ltr">Tampermonkey</b>. אם הוא לא ברשימה, גוללים למטה ולוחצים <span class="btn">מצא תוספות נוספות</span> (Find more add-ons) ומחפשים <b class="ltr">Tampermonkey</b>.
+  לוחצים <span class="btn">+</span> או <span class="btn">הוספה</span>, ואז מאשרים <span class="btn">הוסף</span>.
+</div></div>
+
+<h3>ב. התקנת המתרגם</h3>
+<div class="step"><div class="num">1</div><div class="body">
+  פותחים <b>בפיירפוקס</b> את הקישור:
+  <div class="linkbox"><a href="https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js">https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js</a></div>
+  <div class="tip">💡 אם הקישור הגיע בטיקטוק: לחיצה ארוכה ← <b>העתק</b>, ואז מדביקים אותו בשורת הכתובת של פיירפוקס.</div>
+</div></div>
+<div class="step"><div class="num">2</div><div class="body">ייפתח דף של Tampermonkey עם הפרטים של <b>Comic Translator</b>. לוחצים <span class="btn">Install</span> (או "התקנה").
+  <div class="tip">💡 אם במקום זה נפתח דף מלא בקוד, לוחצים ⋮ ← <b>Tampermonkey</b>, או מרעננים את הדף.</div>
+</div></div>
+
+<h3>ג. שימוש ראשון</h3>
+<div class="step"><div class="num">1</div><div class="body">נכנסים <b>בפיירפוקס</b> לאתר הקומיקס. למטה יופיעו הכפתורים ⚙ ו-<b>"תרגם"</b>.</div></div>
+<div class="step"><div class="num">2</div><div class="body">לוחצים <b>"תרגם"</b>, מדביקים את המפתח משלב 1 בחלון שנפתח, לוחצים אישור וגוללים. 🎉</div></div>
+<div class="step"><div class="num">3</div><div class="body"><b>הכפתורים לא מופיעים?</b> ⋮ ← <b>Tampermonkey</b>: לוודא ש-Tampermonkey פועל וש-<b>Comic Translator</b> מסומן כפעיל. אם Tampermonkey מבקש הרשאה לאתרים, מאשרים. אחר כך מרעננים את הדף.</div></div>
+<div class="good">✅ <b>עדכונים באנדרואיד:</b> Tampermonkey בודק עדכונים לבד פעם ביום. לעדכון מיידי: ⋮ ← Tampermonkey ← <span class="btn">Dashboard</span> ← <span class="btn">Check for userscript updates</span>.</div>
+<p class="small">מכאן והלאה, כל שאר המדריך (הגדרות, שרת עזר, עלויות ובעיות) זהה. איפה שכתוב "🧩 Userscripts", באנדרואיד זה "⋮ ← Tampermonkey".</p>
+
 <!-- ============ שלב 6 ============ -->
 <h2>שלב 6: איך משתמשים והגדרות</h2>
 <ul>
   <li>👆 <b>נגיעה בבועה</b> מציגה את המקור באנגלית. נגיעה נוספת מחזירה את העברית.</li>
   <li>✋ <b>הכפתורים מפריעים?</b> מחזיקים את "תרגם" וגוררים לאן שנוח. המקום נשמר.</li>
   <li>💾 <b>תמונות שכבר תורגמו נשמרות</b> בטלפון, כך שחזרה לפרק לא עולה שוב כסף.</li>
-  <li>☁️ <b>עדכונים:</b> פעם בכמה זמן פותחים את חלון ה-Userscripts (🧩) ולוחצים על הענן. המפתח וההגדרות נשמרים.</li>
+  <li>☁️ <b>עדכונים:</b> באייפון, פעם בכמה זמן פותחים את חלון ה-Userscripts (🧩) ולוחצים על הענן. באנדרואיד זה קורה לבד. המפתח וההגדרות נשמרים.</li>
 </ul>
 
 <h3>תפריט ההגדרות (כפתור ⚙)</h3>
@@ -325,17 +359,18 @@ tr { break-inside: avoid; }
   <tr><td>בועה במקום לא נכון</td><td>קורה לפעמים. נגיעה בבועה מסתירה אותה ומציגה את המקור.</td></tr>
   <tr><td>המתרגם לא מספיק לתרגם כשגוללים מהר</td><td>בתחילת פרק לוקח כמה שניות עד שהוא "נכנס לקצב". אחר כך הוא עובד כמה מסכים לפנייך.</td></tr>
   <tr><td>העדכון בענן ☁️ לא מביא גרסה חדשה</td><td>מחכים 5 דקות ומנסים שוב. את הגרסה הנוכחית רואים ב-⚙, למעלה.</td></tr>
+  <tr><td>אנדרואיד: אין כפתורים</td><td>לוודא שקוראים <b>בפיירפוקס</b> ולא בכרום, ושב-⋮ ← Tampermonkey הסקריפט מסומן כפעיל. אחר כך לרענן.</td></tr>
   <tr><td>ביקש את המפתח שוב</td><td>זה קורה אם מחקו את הסקריפט מ-Userscripts, כי המחיקה מוחקת גם את המפתח. מדביקים שוב.</td></tr>
 </table>
 
 <!-- ============ שלב 10 ============ -->
 <h2>שלב 10: פרטיות וחשוב לדעת</h2>
 <ul>
-  <li>🔒 <b>המפתח נשמר רק באייפון שלך</b>, באחסון הפרטי של Userscripts. הוא לא נשלח לאף אחד חוץ מ-Google, והאתרים שאת גולשת בהם לא יכולים לקרוא אותו.</li>
+  <li>🔒 <b>המפתח נשמר רק בטלפון שלך</b>, באחסון הפרטי של Userscripts (אייפון) או Tampermonkey (אנדרואיד). הוא לא נשלח לאף אחד חוץ מ-Google, והאתרים שאת גולשת בהם לא יכולים לקרוא אותו.</li>
   <li>🖼️ <b>התמונות נשלחות ל-Google לתרגום</b>, כמו בכל שירות תרגום של תמונות.</li>
   <li>🚫 <b>אם נראה שהמפתח דלף:</b> מוחקים אותו ב-<a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> ויוצרים חדש. לוקח דקה.</li>
   <li>💻 <b>במחשב:</b> מתקינים את התוסף <b class="ltr">Tampermonkey</b> (בכרום, באדג' או בפיירפוקס) ופותחים את אותו קישור משלב 4.</li>
-  <li>📱 <b>אנדרואיד:</b> כרגע לא נתמך.</li>
+  <li>🤖 <b>אנדרואיד:</b> רק בפיירפוקס, לא בכרום (ראו פרק "אנדרואיד").</li>
 </ul>
 <div class="warn">
   <b>חשוב לדעת:</b> המתרגם ניתן כמו שהוא, בחינם, בלי אחריות. כל אחד משתמש בו על אחריותו, משלם בעצמו ל-Google על השימוש שלו, ופועל לפי תנאי השימוש של Google ושל האתרים שהוא קורא בהם. הקוד פתוח לכולם, ברישיון MIT.
