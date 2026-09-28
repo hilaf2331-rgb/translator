@@ -1,5 +1,6 @@
 // Cloudflare config for the optional image helper (proxy-worker.js).
-// Lets Cloudflare deploy it straight from this GitHub repo, no copy-paste needed.
+// Lets Cloudflare deploy it straight from this GitHub repo, no copy-paste needed:
+// connect the "comic-helper" Worker to this repo (Settings → Build), branch "main".
 {
   "name": "comic-helper",
   "main": "proxy-worker.js",
