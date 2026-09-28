@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.14.0
+// @version      1.15.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -593,19 +593,23 @@
     const sw = Math.round(W * scale);
     const totalH = Math.round(H * scale);
     const pieceH = Math.min(edge, totalH);
-    const pieces = [];
-    let y = 0;
-    while (true) {
-      const h = Math.min(pieceH, totalH - y);
+    // One horizontal band of the picture, in sent-scale pixels.
+    const crop = (y, h) => {
       const canvas = document.createElement('canvas');
       canvas.width = sw; canvas.height = h;
       canvas.getContext('2d').drawImage(bitmap, 0, y / scale, W, h / scale, 0, 0, sw, h);
       const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-      pieces.push({ y, h, w: sw, data, first: y === 0, last: y + h >= totalH });
+      return { y, h, w: sw, data, first: y === 0, last: y + h >= totalH };
+    };
+    const pieces = [];
+    let y = 0;
+    while (true) {
+      const h = Math.min(pieceH, totalH - y);
+      pieces.push(crop(y, h));
       if (y + h >= totalH) break;
       y += pieceH - Math.round(pieceH * CHUNK_OVERLAP);
     }
-    return { pieces, sentW: sw, sentH: totalH };
+    return { pieces, sentW: sw, sentH: totalH, pieceH, crop };
   }
 
   // Which AI is used is decided by the key you paste: Google keys start with "AQ." (older ones "AIza"),
@@ -886,7 +890,7 @@
         throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
-    const { pieces, sentW, sentH } = slice(bitmap);
+    const { pieces, sentW, sentH, pieceH, crop } = slice(bitmap);
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
     // A bubble that touches a cut between pieces was only partly visible there (and its
@@ -896,8 +900,9 @@
       const margin = Math.max(6, piece.h * 0.02);
       for (const b of results[n]) {
         const g = { x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation };
-        const touchesCut = (!piece.first && b.y < margin) || (!piece.last && b.y + b.h > piece.h - margin);
-        (touchesCut ? cut : whole).push(g);
+        g.cutTop = !piece.first && b.y < margin;
+        g.cutBottom = !piece.last && b.y + b.h > piece.h - margin;
+        (g.cutTop || g.cutBottom ? cut : whole).push(g);
       }
     }
     const sameBubble = (a, b) => {
@@ -906,11 +911,52 @@
       return ix * iy > 0.4 * Math.min(a.w * a.h, b.w * b.h);
     };
     const kept = [];
-    // Whole bubbles first (the same bubble seen whole in two overlapping pieces: keep the larger
-    // box), then cut ones only if nothing whole covers them (a bubble taller than the overlap).
-    for (const list of [whole, cut]) {
-      for (const g of list.sort((a, b) => b.w * b.h - a.w * a.h)) {
-        if (!kept.some((k) => sameBubble(k, g))) kept.push(g);
+    // Whole bubbles first; the same bubble seen whole in two overlapping pieces: keep the larger box.
+    for (const g of whole.sort((a, b) => b.w * b.h - a.w * a.h)) {
+      if (!kept.some((k) => sameBubble(k, g))) kept.push(g);
+    }
+    // Halves of a bubble with no whole copy (e.g. the piece that had it whole was blocked, or the
+    // bubble is taller than the overlap): join halves that belong together, then translate just
+    // that area again so the sentence is translated as one.
+    const orphans = cut.filter((c) => !kept.some((k) => sameBubble(k, c))).sort((a, b) => a.y - b.y);
+    const groups = [];
+    for (const c of orphans) {
+      // Halves of one bubble line up: the upper one runs into the bottom of its piece and the
+      // lower one starts at the top of a later piece (anything between was in a piece we lost).
+      const g = groups.find((u) => {
+        const ix = Math.min(u.x + u.w, c.x + c.w) - Math.max(u.x, c.x);
+        const gap = c.y - (u.y + u.h);
+        return ix > 0.3 * Math.min(u.w, c.w) &&
+          (gap < pieceH * 0.06 || (u.cutBottom && c.cutTop && gap < pieceH * 0.7));
+      });
+      if (!g) { groups.push({ x: c.x, y: c.y, w: c.w, h: c.h, cutBottom: c.cutBottom, parts: [c] }); continue; }
+      const x0 = Math.min(g.x, c.x), y0 = Math.min(g.y, c.y);
+      g.w = Math.max(g.x + g.w, c.x + c.w) - x0; g.h = Math.max(g.y + g.h, c.y + c.h) - y0;
+      g.x = x0; g.y = y0; g.cutBottom = c.cutBottom; g.parts.push(c);
+    }
+    for (const g of groups) {
+      let redone = [];
+      if (g.h < pieceH * 0.9) {
+        const pad = Math.min(200, (pieceH - g.h) / 2);
+        const y0 = Math.max(0, Math.round(g.y - pad));
+        const y1 = Math.min(sentH, Math.round(g.y + g.h + pad));
+        const piece = crop(y0, y1 - y0);
+        const margin = Math.max(6, piece.h * 0.02);
+        try {
+          redone = (await translatePiece(piece, apiKey))
+            // must be whole this time: not running into the crop's own edges
+            .filter((b) => (piece.first || b.y >= margin) && (piece.last || b.y + b.h <= piece.h - margin))
+            .map((b) => ({ x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation }))
+            .filter((b) => sameBubble(b, g));
+        } catch (_) { /* keep the halves below */ }
+      }
+      if (redone.length) {
+        for (const b of redone) if (!kept.some((k) => sameBubble(k, b))) kept.push(b);
+      } else {
+        // Still no whole translation: one box over the whole area (so no original text peeks out
+        // between the halves), with the halves' texts in reading order.
+        kept.push({ ...g, n: g.parts.reduce((s, p) => s + (p.n || 1), 0),
+          t: g.parts.map((p) => p.t.replace(/^\s*(\.\.\.|…)\s*|\s*(\.\.\.|…)\s*$/g, '')).join(' ') });
       }
     }
     for (const g of kept) {
