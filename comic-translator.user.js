@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.1.0
-// @description  Translates speech bubbles in comics / webtoons into Hebrew, drawn right on top of the images. Works on any site.
+// @version      1.2.0
+// @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
 // @match        *://*/*
 // @run-at       document-idle
 // @grant        GM.xmlHttpRequest
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.addStyle
+// @connect      generativelanguage.googleapis.com
+// @connect      api.anthropic.com
 // @connect      *
 // ==/UserScript==
 
@@ -16,7 +18,8 @@
   'use strict';
 
   // ---------- Settings ----------
-  const MODEL = 'claude-opus-5';
+  const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AIza)
+  const CLAUDE_MODEL = 'claude-opus-5';     // used with an Anthropic key (starts with sk-ant-)
   const SOURCE_LANG = 'English';
   const TARGET_LANG = 'Hebrew';
   const TRANSLATE_SFX = false;      // translate sound effects ("BOOM", "SLAM") too?
@@ -157,9 +160,9 @@
   }
 
   async function askForKey() {
-    const key = prompt('הדביקי כאן את מפתח ה-API של Anthropic (מתחיל ב-sk-ant-):', '');
-    if (!key || !key.trim().startsWith('sk-ant-')) {
-      if (key !== null) alert('המפתח לא נראה תקין. הוא אמור להתחיל ב-sk-ant-');
+    const key = prompt('הדביקי כאן את מפתח ה-API של Gemini מ-Google AI Studio (מתחיל ב-AIza):', '');
+    if (!key || !/^(AIza|sk-ant-)/.test(key.trim())) {
+      if (key !== null) alert('המפתח לא נראה תקין. מפתח של Gemini מתחיל ב-AIza');
       return false;
     }
     await store.set(KEY_API, key.trim());
@@ -348,7 +351,92 @@
     return { pieces, sentW: sw, sentH: totalH };
   }
 
-  const SCHEMA = {
+  // Which AI is used is decided by the key you paste: Google keys start with "AIza",
+  // Anthropic keys with "sk-ant-".
+  const providerOf = (key) => (key.startsWith('sk-ant-') ? 'claude' : 'gemini');
+
+  function buildPrompt(piece, coords) {
+    return (
+      `This is a ${piece.w}x${piece.h} px piece of a comic page` +
+      (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') +
+      `. Find every speech bubble, thought bubble and narration/caption box that contains ${SOURCE_LANG} text` +
+      (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
+      `.\nFor each one return ${coords} of the text area inside the bubble, and a natural, fluent ${TARGET_LANG} ` +
+      `translation that fits the character's tone (casual speech stays casual). Use proper gender forms in ` +
+      `${TARGET_LANG} based on who is speaking and to whom, when it is visible in the art. ` +
+      `Skip bubbles cut off at the very top or bottom edge of the image. ` +
+      `If the image is not a comic or has no such text, return an empty list.`
+    );
+  }
+
+  async function callApi(url, headers, body) {
+    const r = await gmRequest({
+      method: 'POST', url,
+      headers: { 'content-type': 'application/json', ...headers },
+      data: JSON.stringify(body),
+      timeout: 120000,
+    });
+    let res;
+    try { res = JSON.parse(r.responseText); } catch (_) { res = null; }
+    if (r.status !== 200) throw new Error(res?.error?.message || 'API HTTP ' + r.status);
+    return res;
+  }
+
+  // ----- Gemini (default) -----
+  // Gemini reports boxes as [y_min, x_min, y_max, x_max] scaled to 0..1000, its native format.
+  const GEMINI_SCHEMA = {
+    type: 'OBJECT',
+    required: ['bubbles'],
+    properties: {
+      bubbles: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          required: ['box_2d', 'translation'],
+          properties: {
+            box_2d: { type: 'ARRAY', items: { type: 'INTEGER' } },
+            translation: { type: 'STRING' },
+          },
+        },
+      },
+    },
+  };
+
+  async function geminiPiece(piece, apiKey) {
+    const res = await callApi(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      { 'x-goog-api-key': apiKey },
+      {
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: piece.data } },
+            { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
+          ],
+        }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: GEMINI_SCHEMA,
+          thinkingConfig: { thinkingLevel: 'low' },
+        },
+      }
+    );
+    const cand = res.candidates?.[0];
+    if (!cand?.content?.parts) return []; // blocked or empty
+    const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
+    return (JSON.parse(text).bubbles || [])
+      .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
+      .map(({ box_2d: [y0, x0, y1, x1], translation }) => ({
+        x: (x0 / 1000) * piece.w,
+        y: (y0 / 1000) * piece.h,
+        w: ((x1 - x0) / 1000) * piece.w,
+        h: ((y1 - y0) / 1000) * piece.h,
+        translation,
+      }));
+  }
+
+  // ----- Claude (used when an Anthropic key is pasted) -----
+  const CLAUDE_SCHEMA = {
     type: 'object',
     additionalProperties: false,
     required: ['bubbles'],
@@ -371,56 +459,41 @@
     },
   };
 
-  function buildPrompt(piece) {
-    return (
-      `This is a ${piece.w}x${piece.h} px piece of a comic page` +
-      (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') +
-      `. Find every speech bubble, thought bubble and narration/caption box that contains ${SOURCE_LANG} text` +
-      (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
-      `.\nFor each one return the box of the text area inside the bubble in pixel coordinates of this image ` +
-      `(x, y = top-left corner, w, h = size) and a natural, fluent ${TARGET_LANG} translation that fits the character's tone ` +
-      `(casual speech stays casual). Use proper gender forms in ${TARGET_LANG} based on who is speaking and to whom, ` +
-      `when it is visible in the art. Skip bubbles cut off at the very top or bottom edge of the image. ` +
-      `If the image is not a comic or has no such text, return an empty list.`
-    );
-  }
-
-  async function translatePiece(piece, apiKey) {
-    const body = {
-      model: MODEL,
-      max_tokens: 8000,
-      fallbacks: 'default',
-      thinking: { type: 'adaptive' },
-      output_config: {
-        effort: 'low',
-        format: { type: 'json_schema', schema: SCHEMA },
-      },
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: piece.data } },
-          { type: 'text', text: buildPrompt(piece) },
-        ],
-      }],
-    };
-    const r = await gmRequest({
-      method: 'POST',
-      url: 'https://api.anthropic.com/v1/messages',
-      headers: {
-        'content-type': 'application/json',
+  async function claudePiece(piece, apiKey) {
+    const res = await callApi(
+      'https://api.anthropic.com/v1/messages',
+      {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
         'anthropic-beta': 'server-side-fallback-2026-07-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      data: JSON.stringify(body),
-      timeout: 120000,
-    });
-    const res = JSON.parse(r.responseText);
-    if (r.status !== 200) throw new Error(res?.error?.message || 'API HTTP ' + r.status);
+      {
+        model: CLAUDE_MODEL,
+        max_tokens: 8000,
+        fallbacks: 'default',
+        thinking: { type: 'adaptive' },
+        output_config: {
+          effort: 'low',
+          format: { type: 'json_schema', schema: CLAUDE_SCHEMA },
+        },
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: piece.data } },
+            { type: 'text', text: buildPrompt(piece, 'the box in pixel coordinates of this image (x, y = top-left corner, w, h = size)') },
+          ],
+        }],
+      }
+    );
     if (res.stop_reason === 'refusal') return [];
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     return JSON.parse(text).bubbles || [];
+  }
+
+  // Bubbles in pixel coordinates of the piece.
+  function translatePiece(piece, apiKey) {
+    return providerOf(apiKey) === 'claude' ? claudePiece(piece, apiKey) : geminiPiece(piece, apiKey);
   }
 
   // Returns bubbles as fractions (0..1) of the whole picture.
@@ -612,7 +685,7 @@
           console.warn('[comic-translator]', err);
           if (state.get(el)?.key === key) state.set(el, { key, error: true });
           if (enabled) setStatus(el, 'שגיאה: ' + err.message);
-          if (/api.key|authentication|x-api-key/i.test(err.message)) {
+          if (/api.key|authentication|permission|x-api-key/i.test(err.message)) {
             alert('מפתח ה-API לא עובד. אפשר להחליף אותו דרך כפתור ⚙');
           }
         })
