@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.10.0
+// @version      1.11.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -68,6 +68,13 @@
   let cache = JSON.parse(await store.get(KEY_CACHE, '{}'));
   const KEY_SOFTEN = 'softenSwears';
   let softenSwears = !!(await store.get(KEY_SOFTEN, false)); // ⚙ → 6
+  // Economy mode (⚙ → 7): less "thinking" and smaller pictures, roughly half the cost.
+  const KEY_ECONOMY = 'economy';
+  let economy = !!(await store.get(KEY_ECONOMY, false));
+  const ECONOMY_EDGE = 1024; // long edge of each piece in economy mode (normal: MAX_EDGE)
+  // Settings a model turned out not to accept, remembered so we stop sending them.
+  const KEY_UNSUPPORTED = 'unsupportedOptions';
+  const unsupported = new Set(JSON.parse(await store.get(KEY_UNSUPPORTED, '[]')));
 
   function saveCache() {
     const keys = Object.keys(cache);
@@ -218,7 +225,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -226,6 +233,13 @@
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
+      else if (choice === '7') {
+        economy = !economy;
+        await store.set(KEY_ECONOMY, economy);
+        alert(economy
+          ? 'מצב חסכוני פועל 💰 פחות "חשיבה" ותמונות קטנות יותר, בערך חצי מחיר. אם התרגום נהיה פחות טוב, אפשר לכבות כאן.'
+          : 'מצב חסכוני כבוי: חזרה לאיכות המלאה.');
+      }
       else if (choice === '6') {
         softenSwears = !softenSwears;
         await store.set(KEY_SOFTEN, softenSwears);
@@ -529,10 +543,11 @@
   // Cut a (possibly very tall) image into pieces the model can read clearly.
   function slice(bitmap) {
     const W = bitmap.width, H = bitmap.height;
-    const scale = Math.min(1, MAX_EDGE / W);
+    const edge = economy ? ECONOMY_EDGE : MAX_EDGE;
+    const scale = Math.min(1, edge / W);
     const sw = Math.round(W * scale);
     const totalH = Math.round(H * scale);
-    const pieceH = Math.min(MAX_EDGE, totalH);
+    const pieceH = Math.min(edge, totalH);
     const pieces = [];
     let y = 0;
     while (true) {
@@ -639,33 +654,54 @@
 
   // imagePart is either the picture itself (inlineData) or a link Google downloads (fileData).
   async function geminiRequest(piece, apiKey, imagePart, model = GEMINI_MODEL) {
-    const res = await callGemini(
-      apiKey,
-      {
-        contents: [{
-          role: 'user',
-          parts: [
-            imagePart,
-            { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
-          ],
-        }],
-        // Adult fiction has swearing, insults and violence: don't let those filters drop whole pages.
-        // Sexual content stays on Google's default filter, so explicit pages are simply declined
-        // (shown as "blocked") rather than pushed through.
-        safetySettings: [
-          ...['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT']
-            .map((category) => ({ category, threshold: 'BLOCK_NONE' })),
-          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+    // Economy mode asks for the least thinking and a lower image resolution. If this model
+    // rejects either option, drop it, remember that, and try again.
+    const minimal = economy && !unsupported.has(`${model}:minimal`);
+    const lowRes = economy && !unsupported.has(`${model}:mediaResolution`);
+    const thinkingConfig = model.startsWith('gemini-2') // 2.5 models take a token budget instead of a level
+      ? { thinkingBudget: 0 }
+      : { thinkingLevel: minimal ? 'minimal' : 'low' };
+    let res;
+    try {
+      res = await callGemini(apiKey, geminiBody(piece, imagePart, thinkingConfig, lowRes), model);
+    } catch (err) {
+      if (err.status !== 400 || !(minimal || lowRes)) throw err;
+      const bad = /media/i.test(err.message) ? 'mediaResolution' : /think/i.test(err.message) ? 'minimal' : null;
+      if (!bad) throw err;
+      unsupported.add(`${model}:${bad}`);
+      store.set(KEY_UNSUPPORTED, JSON.stringify([...unsupported]));
+      return geminiRequest(piece, apiKey, imagePart, model);
+    }
+    return parseGemini(res, piece);
+  }
+
+  function geminiBody(piece, imagePart, thinkingConfig, lowRes) {
+    return {
+      contents: [{
+        role: 'user',
+        parts: [
+          imagePart,
+          { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
         ],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: GEMINI_SCHEMA,
-          // Gemini 3+ takes a thinking level; 2.5 models take a token budget instead.
-          thinkingConfig: model.startsWith('gemini-2') ? { thinkingBudget: 0 } : { thinkingLevel: 'low' },
-        },
+      }],
+      // Adult fiction has swearing, insults and violence: don't let those filters drop whole pages.
+      // Sexual content stays on Google's default filter, so explicit pages are simply declined
+      // (shown as "blocked") rather than pushed through.
+      safetySettings: [
+        ...['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_DANGEROUS_CONTENT']
+          .map((category) => ({ category, threshold: 'BLOCK_NONE' })),
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: GEMINI_SCHEMA,
+        thinkingConfig,
+        ...(lowRes ? { mediaResolution: 'MEDIA_RESOLUTION_MEDIUM' } : {}),
       },
-      model
-    );
+    };
+  }
+
+  function parseGemini(res, piece) {
     const cand = res.candidates?.[0];
     const blockedBy = res.promptFeedback?.blockReason ||
       (['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY', 'RECITATION'].includes(cand?.finishReason) && cand.finishReason);
