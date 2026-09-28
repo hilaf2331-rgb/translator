@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.2.0
+// @version      1.3.0
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
 // @match        *://*/*
 // @run-at       document-idle
@@ -99,15 +99,13 @@
     #ct-ui button.ct-on { background: #7b3fe4; }
     #ct-ui button.ct-gear { background: #333; padding: 0; width: 44px; }
   `;
-  // GM.addStyle gets past sites whose security policy blocks added <style> tags.
-  try {
-    if (typeof GM.addStyle === 'function') await GM.addStyle(CSS);
-    else throw 0;
-  } catch (_) {
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    (document.head || document.documentElement).appendChild(style);
-  }
+  // GM.addStyle gets past sites whose security policy blocks added <style> tags;
+  // our own <style> is a backup that we put back if the site's code removes it.
+  try { if (typeof GM.addStyle === 'function') await GM.addStyle(CSS); } catch (_) { /* backup below */ }
+  const style = document.createElement('style');
+  style.textContent = CSS;
+  const mountStyle = () => (document.head || document.documentElement).appendChild(style);
+  mountStyle();
 
   // ---------- Floating buttons (main page only) ----------
   const ui = document.createElement('div');
@@ -118,8 +116,15 @@
     gearBtn.className = 'ct-gear';
     gearBtn.textContent = '⚙';
     ui.append(toggleBtn, gearBtn);
+    // Inline basics so the buttons stay visible even if the site strips our stylesheet.
+    ui.style.cssText = 'position:fixed;bottom:18px;left:14px;z-index:2147483647;display:flex;gap:8px;';
     document.documentElement.appendChild(ui);
     renderToggle();
+    // Some sites re-render the page and wipe out elements they don't know; put ours back.
+    setInterval(() => {
+      if (!ui.isConnected && !ui.dataset.hiddenByUser) document.documentElement.appendChild(ui);
+      if (!style.isConnected) mountStyle();
+    }, 1000);
 
     toggleBtn.addEventListener('click', async () => {
       if (!enabled && !(await store.get(KEY_API, ''))) {
@@ -138,7 +143,7 @@
       );
       if (choice === '1') askForKey();
       else if (choice === '2') { cache = {}; saveCache(); alert('נוקה.'); }
-      else if (choice === '3') ui.remove();
+      else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
     });
   } else {
     // Frames have no buttons: follow the switch pressed on the main page.
