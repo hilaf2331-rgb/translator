@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>מדריך התקנה – מתרגם קומיקס לעברית</title>
+<style>
+/*FONTS*/
+:root { --p: #7b3fe4; --p2: #efe7ff; --ink: #1d1b22; --mute: #5d5866; --line: #e3dfe9; --ok: #1f9d55; --warn: #b7791f; --warnbg: #fff7e6; --bad: #c53030; }
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #fff; color: var(--ink); }
+body { font-family: 'Rubik', sans-serif; font-size: 12.5pt; line-height: 1.6; direction: rtl; }
+h1 { font-size: 26pt; margin: 0 0 4mm; line-height: 1.2; }
+h2 { font-size: 17pt; margin: 9mm 0 3mm; padding-bottom: 2mm; border-bottom: 2px solid var(--p2); color: var(--p); break-after: avoid; }
+h3 { font-size: 13.5pt; margin: 6mm 0 2mm; break-after: avoid; }
+p { margin: 0 0 3mm; }
+a { color: var(--p); text-decoration: none; font-weight: 500; }
+.ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+code, .code { font-family: 'Rubik', monospace; background: #f4f1f8; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; font-size: 11pt; direction: ltr; unicode-bidi: isolate; }
+.linkbox { direction: ltr; text-align: left; background: #f4f1f8; border: 1px dashed var(--p); border-radius: 8px; padding: 3mm 4mm; font-size: 10.5pt; word-break: break-all; margin: 2mm 0 3mm; }
+.linkbox a { font-weight: 500; }
+
+/* cover */
+.cover { text-align: center; padding-top: 2mm; break-after: page; }
+.cover .emoji { font-size: 28pt; }
+.cover .sub { font-size: 13pt; color: var(--mute); margin-bottom: 4mm; }
+.need { text-align: right; display: inline-block; background: var(--p2); border-radius: 14px; padding: 3mm 8mm; margin-top: 2mm; }
+.need li { margin: 1mm 0; }
+.toc { text-align: right; display: inline-block; margin-top: 2mm; font-size: 11.5pt; line-height: 1.45; }
+.toc ol { margin: 0; padding-right: 6mm; }
+
+/* step boxes */
+.step { display: flex; gap: 4mm; align-items: flex-start; margin: 3mm 0; break-inside: avoid; }
+.num { flex: 0 0 9mm; height: 9mm; border-radius: 50%; background: var(--p); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 12pt; margin-top: 0.5mm; }
+.step .body { flex: 1; }
+.tip, .warn, .good { border-radius: 10px; padding: 3mm 4mm; margin: 3mm 0; break-inside: avoid; }
+.tip { background: #eef5ff; border-right: 4px solid #3b82f6; }
+.warn { background: var(--warnbg); border-right: 4px solid var(--warn); }
+.good { background: #eafaf1; border-right: 4px solid var(--ok); }
+.btn { display: inline-block; background: #eceaf1; border: 1px solid #cfcbd8; border-radius: 6px; padding: 0 6px; font-weight: 500; font-size: 11pt; direction: ltr; unicode-bidi: isolate; }
+.path { font-weight: 500; }
+.path .arr { color: var(--p); margin: 0 1.5mm; }
+
+/* illustrations */
+.fig { margin: 4mm auto; text-align: center; break-inside: avoid; }
+.fig .cap { font-size: 10pt; color: var(--mute); margin-top: 1.5mm; }
+.phone { display: inline-block; width: 78mm; border: 2.5mm solid #222; border-radius: 9mm; background: #f2f2f7; padding: 4mm 3mm; text-align: right; position: relative; }
+.bar { background: #fff; border-radius: 12px; height: 11mm; display: flex; align-items: center; justify-content: space-between; padding: 0 3mm; direction: ltr; box-shadow: 0 1px 3px rgba(0,0,0,.15); font-size: 10pt; }
+.bar .url { color: #333; }
+.puzzle { width: 8mm; height: 8mm; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13pt; }
+.hl { outline: 2.5px solid #e53e3e; outline-offset: 1.5px; border-radius: 50%; }
+.popup { background: #2b2d33; color: #fff; border-radius: 14px; padding: 3mm; direction: ltr; text-align: left; font-size: 10.5pt; }
+.popup .title { text-align: center; font-weight: 700; margin-bottom: 2mm; }
+.popup .row { display: flex; justify-content: space-between; padding: 2mm 1mm; border-top: 1px solid #444; }
+.popup .js { color: #e5d64a; font-size: 9pt; }
+.popup .off { color: #8b8d93; }
+.popup .icons { display: flex; justify-content: space-between; padding: 0 1mm 2mm; font-size: 12pt; }
+.install { display: inline-block; background: #3478f6; color: #fff; border-radius: 8px; padding: 1.5mm 6mm; font-weight: 700; }
+.ctui { display: flex; gap: 2mm; direction: rtl; }
+.ctbtn { background: #7b3fe4; color: #fff; border-radius: 22px; height: 11mm; padding: 0 5mm; display: flex; align-items: center; font-weight: 700; font-size: 11pt; }
+.ctbtn.off { background: #555; }
+.ctgear { background: #333; color: #fff; border-radius: 50%; width: 11mm; height: 11mm; display: flex; align-items: center; justify-content: center; font-size: 13pt; }
+.dialog { background: #fff; border-radius: 12px; padding: 3mm 4mm; box-shadow: 0 2px 10px rgba(0,0,0,.2); font-size: 10pt; }
+.dialog .field { background: #f0f0f3; border-radius: 6px; height: 8mm; margin: 2mm 0; direction: ltr; padding: 1.5mm 2mm; color: #999; }
+.dialog .btns { display: flex; justify-content: flex-start; gap: 6mm; color: #3478f6; font-weight: 700; }
+.settings { background: #fff; border-radius: 10px; font-size: 10.5pt; }
+.settings div { padding: 2mm 3mm; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+.toggle { width: 10mm; height: 5.5mm; border-radius: 3mm; background: #34c759; position: relative; }
+.toggle::after { content: ''; position: absolute; top: .5mm; left: 5mm; width: 4.5mm; height: 4.5mm; border-radius: 50%; background: #fff; }
+.ba { display: flex; gap: 6mm; justify-content: center; align-items: center; }
+.panel { width: 70mm; height: 46mm; border: 2px solid #222; background: #fdfbf6; display: flex; align-items: center; justify-content: center; }
+.bubble { width: 50mm; height: 28mm; border: 2px solid #111; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.15; }
+.bubble.en { font-family: 'Comic Sans MS', 'Rubik', sans-serif; font-weight: 700; font-size: 10pt; direction: ltr; }
+.bubble.he { font-family: 'Gveret Levin', 'Rubik', sans-serif; font-size: 14pt; direction: rtl; }
+.arrow { font-size: 22pt; color: var(--p); }
+
+table { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 11pt; break-inside: auto; }
+th, td { border: 1px solid var(--line); padding: 2mm 3mm; vertical-align: top; text-align: right; }
+th { background: var(--p2); }
+tr { break-inside: avoid; }
+.page-break { break-before: page; }
+.small { font-size: 10pt; color: var(--mute); }
+.center { text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- ============ שער ============ -->
+<section class="cover">
+  <div class="emoji">📖 ➜ 🇮🇱</div>
+  <h1>כפתור תרגום לעברית<br>לכל מנגה, מנהווה וקומיקס</h1>
+  <div class="sub">מדריך התקנה מלא לאייפון, צעד אחר צעד</div>
+
+  <div class="fig">
+    <div class="ba">
+      <div class="panel"><div class="bubble en">HOW MUCH<br>DID HE SMOKE<br>LAST NIGHT...?</div></div>
+      <div class="arrow">⬅</div>
+      <div class="panel"><div class="bubble he">כמה הוא עישן<br>אתמול בלילה...?</div></div>
+    </div>
+    <div class="cap">התרגום נכתב ישר על התמונה באתר, בתוך הבועה, בפונט של קומיקס</div>
+  </div>
+
+  <div class="need">
+    <b>מה צריך לפני שמתחילים:</b>
+    <ul>
+      <li>📱 <b>אייפון</b> עם ספארי (אנדרואיד עוד לא נתמך)</li>
+      <li>📧 <b>חשבון Google</b> (ג'ימייל)</li>
+      <li>💳 <b>כרטיס אשראי</b>: התרגום משולם ל-Google לפי שימוש</li>
+      <li>⏱️ בערך <b>20–30 דקות</b>, פעם אחת בלבד</li>
+    </ul>
+  </div>
+  <br>
+  <div class="toc">
+    <b>מה במדריך:</b>
+    <ol>
+      <li>מפתח של Gemini (המנוע שמתרגם)</li>
+      <li>להגן על המפתח ועל הכסף</li>
+      <li>האפליקציה Userscripts</li>
+      <li>התקנת המתרגם</li>
+      <li>שימוש ראשון</li>
+      <li>איך משתמשים והגדרות</li>
+      <li>אם מופיעה שגיאה עם "שרת עזר"</li>
+      <li>כמה זה עולה</li>
+      <li>בעיות נפוצות</li>
+      <li>פרטיות וחשוב לדעת</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ שלב 1 ============ -->
+<h2>שלב 1: מפתח של Gemini (המנוע שמתרגם)</h2>
+<p>את התרגום עושה <b>Gemini</b>, הבינה המלאכותית של Google. כדי להשתמש בו צריך <b>"מפתח API"</b>: קוד אישי שאומר ל-Google שזה את ושהתשלום עלייך. המפתח הוא כמו סיסמה: <b>לא משתפים אותו עם אף אחד.</b></p>
+
+<div class="step"><div class="num">1</div><div class="body">
+  פותחים בספארי את הכתובת:
+  <div class="linkbox"><a href="https://aistudio.google.com/apikey">https://aistudio.google.com/apikey</a></div>
+  ונכנסים עם חשבון ה-Google שלך. אם שואלים אם לאשר תנאים, מאשרים.
+</div></div>
+
+<div class="step"><div class="num">2</div><div class="body">
+  לוחצים על הכפתור <span class="btn">Create API key</span>.<br>
+  אם שואלים לאיזה פרויקט, בוחרים את מה שמוצע או יוצרים פרויקט חדש. השם לא משנה.
+</div></div>
+
+<div class="step"><div class="num">3</div><div class="body">
+  <b>מחברים אמצעי תשלום.</b> ליד המפתח או בתפריט יופיע כפתור כמו <span class="btn">Set up billing</span> או <span class="btn">Billing</span>. לוחצים עליו, ממלאים פרטים ומוסיפים כרטיס אשראי.
+  <div class="tip">💡 המסכים של Google משתנים מדי פעם, אז הכפתורים יכולים להיראות קצת אחרת. מחפשים את המילים <b>Billing</b> או <b>תשלום</b>.</div>
+</div></div>
+
+<div class="step"><div class="num">4</div><div class="body">
+  <b>מעתיקים את המפתח:</b> לוחצים על סמל ההעתקה ליד המפתח. הוא מתחיל ב-<code>AQ.</code> (במפתחות ישנים, ב-<code>AIza</code>).<br>
+  כדאי לשמור אותו במקום בטוח, למשל בפתקים עם נעילה או באפליקציית הסיסמאות.
+</div></div>
+
+<!-- ============ שלב 2 ============ -->
+<h2>שלב 2: להגן על המפתח ועל הכסף (5 דקות, מאוד מומלץ)</h2>
+<p>שני דברים קטנים שמבטיחים שגם אם המפתח ידלוף, לא יקרה שום דבר רציני.</p>
+
+<h3>א. להגביל את המפתח ל-Gemini בלבד</h3>
+<div class="step"><div class="num">1</div><div class="body">
+  פותחים: <div class="linkbox"><a href="https://console.cloud.google.com/apis/credentials">https://console.cloud.google.com/apis/credentials</a></div>
+</div></div>
+<div class="step"><div class="num">2</div><div class="body">לוחצים על שם המפתח ברשימה.</div></div>
+<div class="step"><div class="num">3</div><div class="body">בחלק <span class="btn">API restrictions</span> פותחים את הרשימה ומסמנים <b>רק</b> את <span class="btn">Gemini API</span>. לוחצים <span class="btn">OK</span>.</div></div>
+<div class="step"><div class="num">4</div><div class="body">בחלק <span class="btn">Application restrictions</span> <b>משאירים על None</b>. זה תקין, האפשרויות האחרות לא מתאימות לכלי הזה.</div></div>
+<div class="step"><div class="num">5</div><div class="body">גוללים למטה ולוחצים <span class="btn">Save</span>. לוקח עד 5 דקות עד שזה נכנס לתוקף.</div></div>
+
+<h3>ב. התראה על הוצאות</h3>
+<div class="step"><div class="num">1</div><div class="body">
+  פותחים: <div class="linkbox"><a href="https://console.cloud.google.com/billing">https://console.cloud.google.com/billing</a></div>
+  ובוחרים את חשבון התשלום שלך.
+</div></div>
+<div class="step"><div class="num">2</div><div class="body">בתפריט: <span class="btn">Budgets &amp; alerts</span> ← <span class="btn">Create budget</span>.</div></div>
+<div class="step"><div class="num">3</div><div class="body">כותבים סכום, למשל <b>30 ₪</b> לחודש, ומשאירים את ההתראות שמוצעות (50%, 90%, 100%). שומרים.</div></div>
+<div class="good">✅ עכשיו תקבלי מייל אם ההוצאה מתקרבת לסכום. שימי לב: <b>זו התראה, לא חסימה</b>. היא לא עוצרת את השימוש, רק מודיעה.</div>
+
+<!-- ============ שלב 3 ============ -->
+<h2>שלב 3: האפליקציה Userscripts</h2>
+<p><b>Userscripts</b> היא אפליקציה חינמית שמוסיפה לספארי "תוספים קטנים". המתרגם הוא תוסף כזה.</p>
+
+<div class="step"><div class="num">1</div><div class="body">פותחים את <b>App Store</b>, מחפשים <b class="ltr">Userscripts</b> ומורידים את האפליקציה של <b class="ltr">Justin Wasack</b>. היא חינמית.</div></div>
+<div class="step"><div class="num">2</div><div class="body">
+  פותחים את האפליקציה Userscripts. לוחצים <span class="btn">Set Userscripts Directory</span>, בוחרים <span class="btn">On My iPhone</span> (בעברית: "בטלפון שלי"), יוצרים תיקייה חדשה בשם <code>Userscripts</code>, נכנסים אליה ולוחצים <span class="btn">Open</span>.
+</div></div>
+<div class="step"><div class="num">3</div><div class="body">
+  <b>מפעילים את התוסף בספארי:</b> פותחים את אפליקציית <b>הגדרות</b>, ואז:<br>
+  <span class="path">הגדרות<span class="arr">←</span>אפליקציות<span class="arr">←</span>Safari<span class="arr">←</span>הרחבות<span class="arr">←</span>Userscripts</span><br>
+  מדליקים את המתג, ובהרשאות בוחרים <b>"כל אתרי האינטרנט" ← "אפשר"</b>.
+  <div class="tip">💡 בגרסאות ישנות של iOS אין "אפליקציות": הולכים ישר ל-<span class="path">הגדרות<span class="arr">←</span>Safari<span class="arr">←</span>הרחבות</span>.</div>
+</div></div>
+
+<div class="fig">
+  <div class="phone"><div class="settings">
+    <div><span><b>Userscripts</b></span><span class="toggle"></span></div>
+    <div><span>כל אתרי האינטרנט</span><span style="color:#3478f6">אפשר</span></div>
+  </div></div>
+  <div class="cap">כך זה צריך להיראות בהגדרות: המתג דלוק, והרשאה "אפשר"</div>
+</div>
+
+<!-- ============ שלב 4 ============ -->
+<h2>שלב 4: התקנת המתרגם</h2>
+<div class="step"><div class="num">1</div><div class="body">
+  פותחים <b>בספארי</b> (לא בכרום ולא בתוך טיקטוק) את הקישור:
+  <div class="linkbox"><a href="https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js">https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js</a></div>
+  <div class="tip">💡 <b>אם קיבלת את הקישור בטיקטוק:</b> לוחצים עליו לחיצה ארוכה ← <b>העתק</b>, ואז פותחים ספארי, מדביקים בשורת הכתובת ולוחצים "עבור". טיקטוק פותח קישורים בדפדפן משלו, ושם זה לא יעבוד.</div>
+</div></div>
+<div class="step"><div class="num">2</div><div class="body">ייפתח דף מלא בקוד באנגלית. <b>זה תקין!</b> לא צריך לקרוא אותו.</div></div>
+<div class="step"><div class="num">3</div><div class="body">
+  לוחצים על <b>סמל ההרחבות</b> בשורת הכתובת. הוא נראה כמו חתיכת פאזל 🧩, ובגרסאות מסוימות מופיע בתוך התפריט של <b>AA</b> או <b>⋯</b>. אחר כך בוחרים <b>Userscripts</b>.
+</div></div>
+
+<div class="fig">
+  <div class="phone">
+    <div class="bar"><span class="puzzle hl">🧩</span><span class="url">raw.githubusercontent.com</span><span>↻</span></div>
+    <div style="height:3mm"></div>
+    <div class="popup">
+      <div class="title">Userscripts</div>
+      <div style="text-align:center;padding:2mm 0">Userscript detected: <b>Comic Translator</b><br><br><span class="install">Install</span></div>
+    </div>
+  </div>
+  <div class="cap">לוחצים על הפאזל (מסומן באדום), ואז על Install</div>
+</div>
+
+<div class="step"><div class="num">4</div><div class="body">בחלון שנפתח לוחצים <span class="btn">Install</span>. זהו, המתרגם מותקן! 🎉</div></div>
+
+<!-- ============ שלב 5 ============ -->
+<h2>שלב 5: שימוש ראשון</h2>
+<div class="step"><div class="num">1</div><div class="body">נכנסים בספארי לאתר שבו קוראים קומיקס ופותחים פרק.</div></div>
+<div class="step"><div class="num">2</div><div class="body">
+  <b>בפעם הראשונה בכל אתר:</b> לוחצים על הפאזל 🧩 ← <b>Userscripts</b>, ובודקים ש-<b>Comic Translator</b> כתוב <b>בלבן</b>.
+  אם הוא <b>אפור</b>, הוא כבוי: נוגעים בו פעם אחת כדי שיהפוך ללבן. אם ספארי שואל אם לאפשר לתוסף באתר הזה, בוחרים <b>"אפשר תמיד"</b>.
+</div></div>
+
+<div class="fig">
+  <div class="phone"><div class="popup">
+    <div class="title">Userscripts</div>
+    <div class="icons"><span>📁 ☁️</span><span>↻</span></div>
+    <div class="row"><span>Comic Translator</span><span class="js">JS</span></div>
+    <div class="row off"><span>Comic Translator</span><span>JS</span></div>
+  </div></div>
+  <div class="cap">למעלה: <b>לבן = פועל ✅</b>. למטה: <b>אפור = כבוי ❌</b>, נוגעים בו כדי להדליק. ה-☁️ הוא כפתור העדכונים.</div>
+</div>
+
+<div class="step"><div class="num">3</div><div class="body">
+  למטה על המסך יופיעו שני כפתורים: ⚙ ו-<b>"תרגם"</b>. לוחצים על <b>"תרגם"</b>.
+  <div class="fig"><div class="ctui" style="justify-content:center"><div class="ctbtn off">תרגם</div><div class="ctgear">⚙</div></div>
+  <div class="cap">הכפתורים של המתרגם. אחרי שמפעילים, "תרגם" הופך לסגול: "תרגום: פועל"</div></div>
+</div></div>
+
+<div class="step"><div class="num">4</div><div class="body">
+  בפעם הראשונה בלבד ייפתח חלון שמבקש את המפתח. <b>מדביקים את המפתח</b> משלב 1 (לחיצה ארוכה בשדה ← הדבק) ולוחצים <b>אישור</b>.
+  <div class="fig"><div class="dialog" style="width:80mm;margin:auto;text-align:right">הדביקי כאן את מפתח ה-API של Gemini מ-Google AI Studio (מתחיל ב-AQ.):<div class="field">AQ.Ab…</div><div class="btns"><span>אישור</span><span>ביטול</span></div></div></div>
+</div></div>
+
+<div class="step"><div class="num">5</div><div class="body"><b>גוללים וקוראים!</b> 🎉 על כל תמונה תופיע לרגע תווית קטנה, "ממתין לתרגום…" ואז "מתרגם…", ואחרי כמה שניות העברית מופיעה בבועות. אחרי ההתחלה, המתרגם עובד כמה מסכים לפנייך.</div></div>
+
+<div class="warn">⚠️ <b>צריך ללחוץ "תרגם" פעם אחת בכל אתר חדש.</b> ככה המתרגם לא עובד (ולא עולה כסף) באתרים שאינם קומיקס.</div>
+
+<!-- ============ שלב 6 ============ -->
+<h2>שלב 6: איך משתמשים והגדרות</h2>
+<ul>
+  <li>👆 <b>נגיעה בבועה</b> מציגה את המקור באנגלית. נגיעה נוספת מחזירה את העברית.</li>
+  <li>✋ <b>הכפתורים מפריעים?</b> מחזיקים את "תרגם" וגוררים לאן שנוח. המקום נשמר.</li>
+  <li>💾 <b>תמונות שכבר תורגמו נשמרות</b> בטלפון, כך שחזרה לפרק לא עולה שוב כסף.</li>
+  <li>☁️ <b>עדכונים:</b> פעם בכמה זמן פותחים את חלון ה-Userscripts (🧩) ולוחצים על הענן. המפתח וההגדרות נשמרים.</li>
+</ul>
+
+<h3>תפריט ההגדרות (כפתור ⚙)</h3>
+<p>לוחצים ⚙, כותבים את <b>המספר</b> של מה שרוצים ולוחצים אישור.</p>
+<table>
+  <tr><th style="width:12mm">מספר</th><th>מה זה עושה</th><th>מתי להשתמש</th></tr>
+  <tr><td>1</td><td>החלפת מפתח API</td><td>אם החלפת מפתח או שיש שגיאה על המפתח</td></tr>
+  <tr><td>2</td><td>ניקוי התרגומים השמורים</td><td>כדי לתרגם מחדש (שימי לב: יתורגם ויעלה שוב)</td></tr>
+  <tr><td>3</td><td>הסתרת הכפתורים עד רענון הדף</td><td>לצילומי מסך נקיים</td></tr>
+  <tr><td>4</td><td>כתובת שרת עזר</td><td>רק אם מופיעה שגיאה עם "שרת עזר" (שלב 7)</td></tr>
+  <tr><td>5</td><td>בחירת פונט (6 פונטים)</td><td>ברירת המחדל: גברת לוין, כתב יד של קומיקס</td></tr>
+  <tr><td>6</td><td>קללות: כמו במקור או מעודנות</td><td>ברירת המחדל: כמו במקור</td></tr>
+  <tr><td>7</td><td><b>מצב חסכוני</b></td><td>כדי לשלם פחות (בערך חצי)</td></tr>
+  <tr><td>8</td><td>שפת המקור</td><td>ברירת המחדל: <b>אוטומטי</b>, עובד גם עם קוריאנית, יפנית וסינית</td></tr>
+  <tr><td>9</td><td><b>הערות על הסיפור</b></td><td>למשל: "שתי הדמויות הראשיות הן גברים". עוזר לעברית לצאת בזכר ובנקבה הנכונים</td></tr>
+  <tr><td>10</td><td>מסנן תוכן מיני: רגיל או מקל</td><td>רגיל = ברירת המחדל של Google</td></tr>
+</table>
+
+<!-- ============ שלב 7 ============ -->
+<h2>שלב 7: אם מופיעה שגיאה עם "שרת עזר"</h2>
+<p><b>רוב האנשים לא צריכים את השלב הזה.</b> הוא רלוונטי רק אם על התמונות מופיעה שגיאה כמו:</p>
+<div class="linkbox" style="text-align:center">image HTTP 403 (…) — האתר חוסם הורדת תמונות. הפתרון: שרת עזר</div>
+<p><b>למה זה קורה:</b> יש אתרים שלא מרשים להוריד את התמונות שלהם לאף אחד חוץ מהדף עצמו, וספארי לא נותן לתוספים לעקוף את זה. הפתרון הוא <b>שרת קטן משלך</b> ב-Cloudflare שמוריד את התמונות בשביל המתרגם. השרת <b>חינמי לגמרי</b> (עד 100,000 תמונות ביום, בלי כרטיס אשראי), מעביר רק תמונות ולא רואה את המפתח.</p>
+<div class="warn">⚠️ השלב הזה הכי טכני במדריך. צריך גם חשבון GitHub (חינמי). אם נתקעים, אפשר לשלוח לי הודעה.</div>
+
+<div class="step"><div class="num">1</div><div class="body"><b>חשבון GitHub:</b> נרשמים בחינם ב-<a href="https://github.com/signup">github.com/signup</a>.</div></div>
+<div class="step"><div class="num">2</div><div class="body"><b>עותק של הקוד:</b> נכנסים ל-<a href="https://github.com/hilaf2331-rgb/translator">github.com/hilaf2331-rgb/translator</a> ולוחצים <span class="btn">Fork</span> ואז <span class="btn">Create fork</span>. זה יוצר עותק של הקוד בחשבון שלך.</div></div>
+<div class="step"><div class="num">3</div><div class="body"><b>חשבון Cloudflare:</b> נרשמים בחינם ב-<a href="https://dash.cloudflare.com/sign-up">dash.cloudflare.com/sign-up</a> ומאשרים את המייל.</div></div>
+<div class="step"><div class="num">4</div><div class="body"><b>יצירת השרת:</b> בתפריט של Cloudflare: <span class="btn">Workers &amp; Pages</span> ← <span class="btn">Create</span> ← <span class="btn">Start with Hello World!</span>. בשם כותבים <code>comic-helper</code> ולוחצים <span class="btn">Deploy</span>. בשלב הזה השרת מציג "Hello World", וזה בסדר.</div></div>
+<div class="step"><div class="num">5</div><div class="body"><b>חיבור לקוד:</b> בדף של השרת: <span class="btn">Settings</span> ← <span class="btn">Build</span> ← <span class="btn">Connect</span> ← <span class="btn">GitHub</span>. מאשרים גישה (עדיף לבחור <span class="btn">Only select repositories</span> ← <code>translator</code>), בוחרים את העותק שלך ואת הענף <code>main</code>, ולוחצים <span class="btn">Connect</span>.</div></div>
+<div class="step"><div class="num">6</div><div class="body"><b>הפעלת הבנייה:</b> Cloudflare בונה את השרת כשמשהו משתנה בקוד. אם בלשונית <span class="btn">Deployments</span> לא מופיעה בנייה חדשה תוך כמה דקות: נכנסים לעותק שלך ב-GitHub, פותחים את הקובץ <code>wrangler.jsonc</code>, לוחצים על העיפרון ✏️, מוסיפים שורה ריקה בסוף ולוחצים <span class="btn">Commit changes</span>.</div></div>
+<div class="step"><div class="num">7</div><div class="body"><b>בדיקה:</b> בדף הראשי של השרת ב-Cloudflare מופיעה הכתובת שלו, משהו כמו <code>comic-helper.השם-שלך.workers.dev</code>. פותחים אותה בספארי (עם <code>https://</code> בהתחלה). צריך להופיע:
+  <div class="linkbox" style="text-align:center">Comic Translator image helper is running ✓</div>
+  אם עדיין כתוב "Hello World!", מחכים עוד דקה-שתיים ומרעננים.
+</div></div>
+<div class="step"><div class="num">8</div><div class="body"><b>חיבור למתרגם:</b> באתר הקומיקס לוחצים ⚙, כותבים <b>4</b>, מדביקים את הכתובת של השרת ולוחצים אישור. התמונות שנכשלו ינסו שוב לבד.</div></div>
+<div class="warn">🔒 <b>לא לפרסם את הכתובת של השרת</b> (ולא לצלם את ⚙ ← 4 בסרטונים). כל מי שיודע אותה יכול להשתמש בשרת שלך.</div>
+
+<!-- ============ שלב 8 ============ -->
+<h2>שלב 8: כמה זה עולה</h2>
+<ul>
+  <li>💰 <b>משלמים ל-Google לפי שימוש:</b> לפי כמה תמונות מתורגמות. אין מנוי קבוע.</li>
+  <li>📊 <b>לראות כמה שילמת:</b> <a href="https://console.cloud.google.com/billing">console.cloud.google.com/billing</a> ← <span class="btn">Reports</span>. בצד ימין מסננים <span class="btn">Services</span> ← <span class="btn">Gemini API</span>.</li>
+  <li>⏳ <b>החיוב מתעדכן באיחור</b> של כמה שעות עד יום. מה שקראת היום יופיע מחר.</li>
+  <li>🟢 <b>לחסוך:</b> ⚙ ← <b>7</b> (מצב חסכוני), בערך חצי מחיר. אם האיכות לא מספיקה, מכבים באותה דרך.</li>
+  <li>♻️ <b>תמונות שכבר תורגמו נשמרות</b>, כך שחזרה לפרק לא עולה שוב.</li>
+  <li>☁️ <b>שרת העזר</b> (אם צריך) חינמי.</li>
+</ul>
+
+<!-- ============ שלב 9 ============ -->
+<h2>שלב 9: בעיות נפוצות</h2>
+<table>
+  <tr><th style="width:38%">מה רואים</th><th>מה עושים</th></tr>
+  <tr><td>הכפתורים "תרגם" ו-⚙ לא מופיעים</td><td>🧩 ← Userscripts ← לוודא ש-Comic Translator <b>לבן</b> (אפור = כבוי, נוגעים בו). אחר כך מרעננים את הדף. אם עדיין לא, בודקים את ההרשאות בהגדרות (שלב 3).</td></tr>
+  <tr><td>הכפתור הופיע ונעלם</td><td>כנראה נגעת בסקריפט בחלון של Userscripts והוא נהיה אפור. נוגעים בו שוב.</td></tr>
+  <tr><td>שגיאה על המפתח (API key, permission)</td><td>⚙ ← 1 ← מדביקים את המפתח מחדש. בודקים שבהגבלות של המפתח מסומן <b>Gemini API</b> (שלב 2). אחרי שינוי מחכים 5 דקות.</td></tr>
+  <tr><td><code>image HTTP 403 … שרת עזר</code></td><td>האתר חוסם הורדת תמונות, צריך שרת עזר (שלב 7).</td></tr>
+  <tr><td>"נחסם על ידי Google"</td><td>Google סירבו לתרגם את התמונה הזו, בדרך כלל בגלל תוכן מיני מפורש. ב-⚙ ← 10 אפשר לעבור למסנן "מקל".</td></tr>
+  <tr><td>זכר ונקבה לא נכונים</td><td>⚙ ← 9 ← כותבים מי הדמויות. למשל: "שתי הדמויות הראשיות הן גברים". אחר כך ⚙ ← 2 כדי לתרגם מחדש.</td></tr>
+  <tr><td>בועה במקום לא נכון</td><td>קורה לפעמים. נגיעה בבועה מסתירה אותה ומציגה את המקור.</td></tr>
+  <tr><td>המתרגם לא מספיק לתרגם כשגוללים מהר</td><td>בתחילת פרק לוקח כמה שניות עד שהוא "נכנס לקצב". אחר כך הוא עובד כמה מסכים לפנייך.</td></tr>
+  <tr><td>העדכון בענן ☁️ לא מביא גרסה חדשה</td><td>מחכים 5 דקות ומנסים שוב. את הגרסה הנוכחית רואים ב-⚙, למעלה.</td></tr>
+  <tr><td>ביקש את המפתח שוב</td><td>זה קורה אם מחקו את הסקריפט מ-Userscripts, כי המחיקה מוחקת גם את המפתח. מדביקים שוב.</td></tr>
+</table>
+
+<!-- ============ שלב 10 ============ -->
+<h2>שלב 10: פרטיות וחשוב לדעת</h2>
+<ul>
+  <li>🔒 <b>המפתח נשמר רק באייפון שלך</b>, באחסון הפרטי של Userscripts. הוא לא נשלח לאף אחד חוץ מ-Google, והאתרים שאת גולשת בהם לא יכולים לקרוא אותו.</li>
+  <li>🖼️ <b>התמונות נשלחות ל-Google לתרגום</b>, כמו בכל שירות תרגום של תמונות.</li>
+  <li>🚫 <b>אם נראה שהמפתח דלף:</b> מוחקים אותו ב-<a href="https://aistudio.google.com/apikey">aistudio.google.com/apikey</a> ויוצרים חדש. לוקח דקה.</li>
+  <li>💻 <b>במחשב:</b> מתקינים את התוסף <b class="ltr">Tampermonkey</b> (בכרום, באדג' או בפיירפוקס) ופותחים את אותו קישור משלב 4.</li>
+  <li>📱 <b>אנדרואיד:</b> כרגע לא נתמך.</li>
+</ul>
+<div class="warn">
+  <b>חשוב לדעת:</b> המתרגם ניתן כמו שהוא, בחינם, בלי אחריות. כל אחד משתמש בו על אחריותו, משלם בעצמו ל-Google על השימוש שלו, ופועל לפי תנאי השימוש של Google ושל האתרים שהוא קורא בהם. הקוד פתוח לכולם, ברישיון MIT.
+</div>
+
+<p class="center" style="margin-top:10mm;font-size:14pt">קריאה נעימה! 📖💜</p>
+
+</body>
+</html>
