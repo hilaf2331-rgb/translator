@@ -5,6 +5,7 @@
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
 // @match        *://*/*
 // @run-at       document-idle
+// @inject-into  content
 // @grant        GM.xmlHttpRequest
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -18,7 +19,7 @@
   'use strict';
 
   // ---------- Settings ----------
-  const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AIza)
+  const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AQ.)
   const CLAUDE_MODEL = 'claude-opus-5';     // used with an Anthropic key (starts with sk-ant-)
   const SOURCE_LANG = 'English';
   const TARGET_LANG = 'Hebrew';
@@ -160,9 +161,9 @@
   }
 
   async function askForKey() {
-    const key = prompt('הדביקי כאן את מפתח ה-API של Gemini מ-Google AI Studio (מתחיל ב-AIza):', '');
-    if (!key || !/^(AIza|sk-ant-)/.test(key.trim())) {
-      if (key !== null) alert('המפתח לא נראה תקין. מפתח של Gemini מתחיל ב-AIza');
+    const key = prompt('הדביקי כאן את מפתח ה-API של Gemini מ-Google AI Studio (מתחיל ב-AQ.):', '');
+    if (!key || !/^(AQ\.|AIza|sk-ant-)/.test(key.trim())) {
+      if (key !== null) alert('המפתח לא נראה תקין. מפתח של Gemini מתחיל ב-AQ.');
       return false;
     }
     await store.set(KEY_API, key.trim());
@@ -351,8 +352,8 @@
     return { pieces, sentW: sw, sentH: totalH };
   }
 
-  // Which AI is used is decided by the key you paste: Google keys start with "AIza",
-  // Anthropic keys with "sk-ant-".
+  // Which AI is used is decided by the key you paste: Google keys start with "AQ." (older ones "AIza"),
+  // Anthropic keys with "sk-ant-". Google's new AQ. keys only work in the x-goog-api-key header.
   const providerOf = (key) => (key.startsWith('sk-ant-') ? 'claude' : 'gemini');
 
   function buildPrompt(piece, coords) {
