@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.4.0
+// @version      1.4.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -351,16 +351,35 @@
       const r = await fetch(src);
       if (r.ok) return await createImageBitmap(await r.blob());
     } catch (_) { /* fall through */ }
-    // 2) Userscript request: not bound by the browser's cross-site rules.
-    //    Many comic CDNs only serve images when they come "from" the reader page.
-    const r = await gmRequest({
-      method: 'GET', url: src, responseType: 'blob',
-      headers: { Referer: location.href },
-    });
-    if (r.status < 200 || r.status >= 300) throw new Error('image HTTP ' + r.status);
-    let blob = r.response;
-    if (!(blob instanceof Blob)) blob = new Blob([blob]);
-    return await createImageBitmap(blob);
+    // 2) A fresh copy of the picture asking the server for cross-site permission.
+    try {
+      const probe = new Image();
+      probe.crossOrigin = 'anonymous';
+      probe.src = src + (src.includes('?') ? '&' : '?') + 'ct=1';
+      await probe.decode();
+      if (isReadable(probe)) return await createImageBitmap(probe);
+    } catch (_) { /* fall through */ }
+    // 3) Userscript requests: not bound by the browser's cross-site rules. Image servers
+    //    check different things, so try a few ways of asking.
+    const attempts = [
+      { Referer: location.href },          // "I'm the reader page"
+      { Referer: location.origin + '/' },  // "I'm from this site"
+      {},                                   // plain request, like opening the image directly
+    ];
+    let status = 0;
+    for (const headers of attempts) {
+      try {
+        const r = await gmRequest({ method: 'GET', url: src, responseType: 'blob', headers });
+        status = r.status;
+        if (r.status < 200 || r.status >= 300) continue;
+        let blob = r.response;
+        if (!(blob instanceof Blob)) blob = new Blob([blob]);
+        return await createImageBitmap(blob);
+      } catch (_) { /* try the next way */ }
+    }
+    let imgHost = '';
+    try { imgHost = new URL(src).hostname; } catch (_) { /* keep empty */ }
+    throw new Error(`image HTTP ${status || '?'} (${imgHost})`);
   }
 
   async function loadBitmap(el) {
