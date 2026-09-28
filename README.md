@@ -36,6 +36,8 @@
    - לוחצים על המפתח ← **API restrictions** ← מסמנים רק **Gemini API** ← **Save**.
    - ב-**Billing ← Budgets & alerts** מגדירים התראה, למשל על 10$ בחודש.
 
+> 🆓 **מסלול חינמי, בלי כרטיס אשראי:** אפשר לא לחבר בילינג. המפתח עובד בחינם עם מגבלות: כ-20 תמונות ביום במודל הרגיל, ואז מעבר אוטומטי ל-`gemini-3.5-flash-lite` עם כ-500 ביום. במסלול החינמי Google רשאים להשתמש בתוכן לשיפור המודלים.
+
 ### שלב 2: האפליקציה Userscripts
 1. מורידים מה-App Store את האפליקציה החינמית **Userscripts** (של Justin Wasack).
 2. פותחים אותה ← **Set Userscripts Directory** ← **On My iPhone** ← יוצרים תיקייה בשם `Userscripts` ← **Open**.

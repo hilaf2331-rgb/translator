@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.16.0
+// @version      1.17.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -26,6 +26,9 @@
 
   // ---------- Settings ----------
   const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AQ.)
+  // Google's free tier (no credit card) allows only ~20 requests a day on the model above but
+  // ~500 on this lighter one, so when the daily quota runs out we switch to it by ourselves.
+  const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
   const CLAUDE_MODEL = 'claude-opus-5';     // used with an Anthropic key (starts with sk-ant-)
   // Language of the comic (⚙ → 8). "auto" lets the model recognise it by itself.
   const SOURCES = [
@@ -663,6 +666,7 @@
     if (r.status !== 200) {
       const err = new Error(res?.error?.message || 'API HTTP ' + r.status);
       err.status = r.status;
+      err.raw = r.responseText || '';
       throw err;
     }
     return res;
@@ -785,8 +789,52 @@
       }));
   }
 
-  function geminiPiece(piece, apiKey) {
-    return geminiRequest(piece, apiKey, { inlineData: { mimeType: 'image/jpeg', data: piece.data } });
+  // ----- Quotas (mostly for Google's free tier) -----
+  // A model whose *daily* quota ran out is skipped until tomorrow; a *per-minute* limit means
+  // "wait a bit and try again", and we also send fewer pictures at once for the rest of the visit.
+  const KEY_EXHAUSTED = 'quotaExhausted';
+  const today = () => new Date().toISOString().slice(0, 10);
+  let exhausted = JSON.parse(await store.get(KEY_EXHAUSTED, '{}'));
+  let slowDown = false;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function quotaKind(err) {
+    if (err.status !== 429) return null;
+    const text = (err.raw || '') + ' ' + err.message;
+    return /PerDay|per day|daily/i.test(text) ? 'day' : 'minute';
+  }
+  function retryDelayMs(err) {
+    const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(err.raw || '') || /retry in (\d+(?:\.\d+)?)s/i.exec(err.message);
+    return Math.min(60, m ? Number(m[1]) + 1 : 20) * 1000;
+  }
+
+  async function geminiPiece(piece, apiKey) {
+    const part = { inlineData: { mimeType: 'image/jpeg', data: piece.data } };
+    const models = [GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter((m) => exhausted[m] !== today());
+    if (!models.length) {
+      throw new Error('נגמרה המכסה היומית החינמית של Google. היא מתחדשת מחר, או שאפשר לחבר כרטיס אשראי לחשבון כדי להמשיך.');
+    }
+    for (const model of models) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await geminiRequest(piece, apiKey, part, model);
+        } catch (err) {
+          const kind = quotaKind(err);
+          if (kind === 'day') {
+            exhausted[model] = today();
+            store.set(KEY_EXHAUSTED, JSON.stringify(exhausted));
+            break; // next model
+          }
+          if (kind === 'minute' && attempt < 4) {
+            slowDown = true;
+            await sleep(retryDelayMs(err));
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+    throw new Error('נגמרה המכסה היומית החינמית של Google. היא מתחדשת מחר, או שאפשר לחבר כרטיס אשראי לחשבון כדי להמשיך.');
   }
 
   // Last resort for sites whose image server refuses our downloads: hand Gemini the link and
@@ -1163,7 +1211,7 @@
   }
 
   async function pump() {
-    while (enabled && running < MAX_PARALLEL && queue.length) {
+    while (enabled && running < (slowDown ? 2 : MAX_PARALLEL) && queue.length) {
       // Translate the picture closest to where you are reading first (ones just below come
       // before ones far away or already scrolled past).
       const dist = (q) => {
