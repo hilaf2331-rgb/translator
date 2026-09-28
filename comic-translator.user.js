@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.3.1
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -13,6 +13,7 @@
 // @grant        GM.setValue
 // @grant        GM.addStyle
 // @connect      generativelanguage.googleapis.com
+// @connect      aiplatform.googleapis.com
 // @connect      api.anthropic.com
 // @connect      *
 // ==/UserScript==
@@ -122,6 +123,7 @@
     ui.style.cssText = 'position:fixed;bottom:18px;left:14px;z-index:2147483647;display:flex;gap:8px;';
     document.documentElement.appendChild(ui);
     renderToggle();
+    makeDraggable(ui);
     // Some sites re-render the page and wipe out elements they don't know; put ours back.
     setInterval(() => {
       if (!ui.isConnected && !ui.dataset.hiddenByUser) document.documentElement.appendChild(ui);
@@ -153,6 +155,43 @@
       const on = JSON.parse(await store.get(KEY_SITES, '[]')).includes(host);
       if (on !== enabled) setEnabled(on);
     }, 2000);
+  }
+
+  // Drag the buttons anywhere (so they never cover a site's own buttons); the spot is remembered.
+  async function makeDraggable(box) {
+    const KEY_POS = 'uiPos';
+    const place = ({ x, y }) => {
+      box.style.left = Math.max(0, Math.min(innerWidth - box.offsetWidth, x * innerWidth)) + 'px';
+      box.style.top = Math.max(0, Math.min(innerHeight - box.offsetHeight, y * innerHeight)) + 'px';
+      box.style.bottom = 'auto';
+    };
+    let pos = JSON.parse(await store.get(KEY_POS, 'null'));
+    if (pos) place(pos);
+    addEventListener('resize', () => pos && place(pos));
+    for (const b of box.querySelectorAll('button')) b.style.touchAction = 'none';
+
+    let start = null, moved = false;
+    box.addEventListener('pointerdown', (e) => {
+      const r = box.getBoundingClientRect();
+      start = { px: e.clientX, py: e.clientY, x: r.left, y: r.top };
+      moved = false;
+    });
+    addEventListener('pointermove', (e) => {
+      if (!start) return;
+      const dx = e.clientX - start.px, dy = e.clientY - start.py;
+      if (!moved && Math.hypot(dx, dy) < 10) return;
+      moved = true;
+      pos = { x: (start.x + dx) / innerWidth, y: (start.y + dy) / innerHeight };
+      place(pos);
+    });
+    addEventListener('pointerup', () => {
+      if (start && moved) store.set(KEY_POS, JSON.stringify(pos));
+      start = null;
+    });
+    // A drag must not also count as a tap on the button under the finger.
+    box.addEventListener('click', (e) => {
+      if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; }
+    }, true);
   }
 
   function renderToggle() {
@@ -386,7 +425,11 @@
     });
     let res;
     try { res = JSON.parse(r.responseText); } catch (_) { res = null; }
-    if (r.status !== 200) throw new Error(res?.error?.message || 'API HTTP ' + r.status);
+    if (r.status !== 200) {
+      const err = new Error(res?.error?.message || 'API HTTP ' + r.status);
+      err.status = r.status;
+      throw err;
+    }
     return res;
   }
 
@@ -410,10 +453,35 @@
     },
   };
 
+  // A Google key may be allowed on the Gemini API, on Agent Platform (Vertex AI), or both.
+  // Try them in order and remember the one that answers.
+  const GEMINI_ENDPOINTS = [
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    `https://aiplatform.googleapis.com/v1/publishers/google/models/${GEMINI_MODEL}:generateContent`,
+  ];
+  const KEY_ENDPOINT = 'geminiEndpoint';
+
+  async function callGemini(apiKey, body) {
+    const saved = await store.get(KEY_ENDPOINT, '');
+    const order = [saved, ...GEMINI_ENDPOINTS.filter((u) => u !== saved)].filter(Boolean);
+    let lastErr;
+    for (const url of order) {
+      try {
+        const res = await callApi(url, { 'x-goog-api-key': apiKey }, body);
+        if (url !== saved) store.set(KEY_ENDPOINT, url);
+        return res;
+      } catch (err) {
+        lastErr = err;
+        // Only "this key/API isn't allowed here" is worth trying the other service for.
+        if (![401, 403, 404].includes(err.status)) throw err;
+      }
+    }
+    throw lastErr;
+  }
+
   async function geminiPiece(piece, apiKey) {
-    const res = await callApi(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      { 'x-goog-api-key': apiKey },
+    const res = await callGemini(
+      apiKey,
       {
         contents: [{
           role: 'user',
