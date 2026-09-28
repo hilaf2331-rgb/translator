@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.15.0
+// @version      1.16.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -627,8 +627,16 @@
       ` (horizontal or vertical)` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
       `.\nFor each one return ${coords} of the text area inside the bubble (tight around the letters), how many lines the original text is written on, ` +
-      `and a natural, fluent ${TARGET_LANG} ` +
-      `translation that fits the character's tone (casual speech stays casual). ` +
+      `and its ${TARGET_LANG} translation. ` +
+      // Style: how people actually talk, not dubbed-TV subtitles.
+      `Write the ${TARGET_LANG} the way young Israelis really talk and text: short, casual, natural spoken ` +
+      `${TARGET_LANG}, with everyday Israeli slang where it fits the character. Never translate word for word: ` +
+      `say what the line means and how it feels, the way an Israeli would say it in that situation, and turn ` +
+      `English idioms into Hebrew ones (e.g. "make a move" is not "עושה מהלך"). Avoid formal or literary words ` +
+      `(אינני, הנני, כיצד, מדוע, אולם, על מנת); use the spoken ones (אני לא, איך, למה, אבל, כדי). ` +
+      `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
+      `Flirting and romance should sound natural, not cheesy. Narration boxes can be a little more written ` +
+      `but still simple. Keep lines short so they fit the bubble. No nikud. ` +
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
       `the art (look at the characters in the panel and the bubble tails) and use the matching forms. ` +
       `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
