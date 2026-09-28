@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.9.0
+// @version      1.10.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -35,7 +35,8 @@
   const MIN_SHOWN_WIDTH = 150;      // ...and images shown smaller than this on screen
   const MAX_EDGE = 1568;            // long edge of each piece sent to the model (px)
   const CHUNK_OVERLAP = 200;        // overlap between pieces of a tall webtoon strip (px, in sent scale)
-  const MAX_PARALLEL = 2;           // images translated at the same time
+  const MAX_PARALLEL = 10;           // images translated at the same time
+  const LOOK_AHEAD = '800%';        // start translating this far (in screens) before you get there
   const CACHE_LIMIT = 400;          // translated images remembered across visits
 
   const isTop = window === window.top;
@@ -300,6 +301,7 @@
     if (clean && !/^https:\/\/[^/\s]+/.test(clean)) { alert('הכתובת צריכה להתחיל ב-https://'); return; }
     await store.set(KEY_PROXY, clean);
     proxyHosts.clear();
+    store.set(KEY_PROXY_HOSTS, '[]');
     // Let pictures that failed before try again.
     for (const el of nearView) if (state.get(el)?.error) state.delete(el);
     alert(clean ? 'נשמר ✓ תמונות שנכשלו ינסו שוב.' : 'שרת העזר בוטל.');
@@ -445,7 +447,15 @@
     }
   }
 
-  const proxyHosts = new Set(); // image servers that only work through the helper
+  // Image servers that only work through the helper, remembered across visits so the next
+  // chapter goes straight there instead of trying (and waiting on) the other ways first.
+  const KEY_PROXY_HOSTS = 'proxyHosts';
+  const proxyHosts = new Set(JSON.parse(await store.get(KEY_PROXY_HOSTS, '[]')));
+  const rememberProxyHost = (h) => {
+    if (proxyHosts.has(h)) return;
+    proxyHosts.add(h);
+    store.set(KEY_PROXY_HOSTS, JSON.stringify([...proxyHosts].slice(-50)));
+  };
 
   async function viaProxy(src) {
     const proxy = await store.get(KEY_PROXY, '');
@@ -497,7 +507,7 @@
     }
     // 4) The image helper server, if one is set up (⚙ → 4).
     const bmp = await viaProxy(src);
-    if (bmp) { proxyHosts.add(imgHost); return bmp; }
+    if (bmp) { rememberProxyHost(imgHost); return bmp; }
     const err = new Error(`image HTTP ${status || '?'} (${imgHost})`);
     err.blocked = true;
     throw err;
@@ -789,8 +799,9 @@
     }
     const { pieces, sentW, sentH } = slice(bitmap);
     const out = [];
-    for (const piece of pieces) {
-      const bubbles = await translatePiece(piece, apiKey);
+    const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
+    for (const [n, piece] of pieces.entries()) {
+      const bubbles = results[n];
       // Keep a bubble only in the piece that "owns" its center, so overlaps don't duplicate it.
       const top = piece.first ? 0 : CHUNK_OVERLAP / 2;
       const bottom = piece.last ? piece.h : piece.h - CHUNK_OVERLAP / 2;
@@ -1001,7 +1012,16 @@
 
   async function pump() {
     while (enabled && running < MAX_PARALLEL && queue.length) {
-      const { el, key } = queue.shift();
+      // Translate the picture closest to where you are reading first (ones just below come
+      // before ones far away or already scrolled past).
+      const dist = (q) => {
+        const r = q.el.getBoundingClientRect();
+        if (r.bottom < 0) return 1e6 - r.bottom; // already scrolled past: only after everything ahead
+        return Math.max(0, r.top);
+      };
+      let best = 0;
+      for (let i = 1; i < queue.length; i++) if (dist(queue[i]) < dist(queue[best])) best = i;
+      const { el, key } = queue.splice(best, 1)[0];
       if (state.get(el)?.key !== key) continue; // page changed while waiting
       running++;
       setStatus(el, 'מתרגם…');
@@ -1095,7 +1115,7 @@
         if (e.isIntersecting) { nearView.add(e.target); check(e.target, true); }
         else nearView.delete(e.target);
       }
-    }, { rootMargin: '150% 0px 150% 0px' });
+    }, { rootMargin: `${LOOK_AHEAD} 0px ${LOOK_AHEAD} 0px` });
     document.addEventListener('load', onLoad, true);
     scan();
     scanner = setInterval(scan, 1500);
