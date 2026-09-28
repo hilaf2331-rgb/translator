@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.5.1
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/claude/chrome-extension-comics-hj43e8/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -15,6 +15,7 @@
 // @connect      generativelanguage.googleapis.com
 // @connect      aiplatform.googleapis.com
 // @connect      api.anthropic.com
+// @connect      workers.dev
 // @connect      *
 // ==/UserScript==
 
@@ -41,6 +42,7 @@
   const KEY_API = 'apiKey';
   const KEY_SITES = 'enabledSites';
   const KEY_CACHE = 'cache';
+  const KEY_PROXY = 'proxyUrl'; // optional image helper (see proxy-worker.js)
 
   function topHostname() {
     try { return window.top.location.hostname; } catch (_) { /* cross-origin */ }
@@ -143,12 +145,13 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות`,
         '1'
       );
       if (choice === '1') askForKey();
       else if (choice === '2') { cache = {}; saveCache(); alert('נוקה.'); }
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
+      else if (choice === '4') askForProxy();
     });
   } else {
     // Frames have no buttons: follow the switch pressed on the main page.
@@ -205,6 +208,20 @@
     if (isTop) renderToggle();
     if (enabled) startWatching();
     else stopAll();
+  }
+
+  async function askForProxy() {
+    const cur = await store.get(KEY_PROXY, '');
+    const url = prompt('הדביקי את כתובת שרת העזר (למשל https://comic-helper.xxx.workers.dev).\nכדי לבטל, מוחקים ולוחצים אישור:', cur);
+    if (url === null) return;
+    const clean = url.trim().replace(/\/+$/, '');
+    if (clean && !/^https:\/\/[^/\s]+/.test(clean)) { alert('הכתובת צריכה להתחיל ב-https://'); return; }
+    await store.set(KEY_PROXY, clean);
+    proxyHosts.clear();
+    // Let pictures that failed before try again.
+    for (const el of nearView) if (state.get(el)?.error) state.delete(el);
+    alert(clean ? 'נשמר ✓ תמונות שנכשלו ינסו שוב.' : 'שרת העזר בוטל.');
+    if (enabled) nearView.forEach((el) => check(el));
   }
 
   async function askForKey() {
@@ -346,7 +363,25 @@
     }
   }
 
+  const proxyHosts = new Set(); // image servers that only work through the helper
+
+  async function viaProxy(src) {
+    const proxy = await store.get(KEY_PROXY, '');
+    if (!proxy) return null;
+    const url = `${proxy}/?url=${encodeURIComponent(src)}&ref=${encodeURIComponent(location.href)}`;
+    const r = await fetch(url); // the helper allows cross-site reads
+    if (!r.ok) throw new Error(`שרת העזר: ${r.status} ${(await r.text()).slice(0, 60)}`);
+    return await createImageBitmap(await r.blob());
+  }
+
   async function bitmapFromUrl(src) {
+    let imgHost = '';
+    try { imgHost = new URL(src).hostname; } catch (_) { /* keep empty */ }
+    // A server that already needed the helper: go straight there.
+    if (proxyHosts.has(imgHost)) {
+      const bmp = await viaProxy(src);
+      if (bmp) return bmp;
+    }
     // 1) Page fetch: works for same-site images, blob: URLs, and CDNs that allow it.
     try {
       const r = await fetch(src);
@@ -378,9 +413,12 @@
         return await createImageBitmap(blob);
       } catch (_) { /* try the next way */ }
     }
-    let imgHost = '';
-    try { imgHost = new URL(src).hostname; } catch (_) { /* keep empty */ }
-    throw new Error(`image HTTP ${status || '?'} (${imgHost})`);
+    // 4) The image helper server, if one is set up (⚙ → 4).
+    const bmp = await viaProxy(src);
+    if (bmp) { proxyHosts.add(imgHost); return bmp; }
+    const err = new Error(`image HTTP ${status || '?'} (${imgHost})`);
+    err.blocked = true;
+    throw err;
   }
 
   async function loadBitmap(el) {
@@ -542,7 +580,7 @@
 
   // Last resort for sites whose image server refuses our downloads: hand Gemini the link and
   // let Google fetch the picture. Newer models refuse outside links, so try ones that accept them.
-  const URL_MODELS = ['gemini-3-flash-preview', 'gemini-2.5-flash'];
+  const URL_MODELS = ['gemini-3-flash-preview'];
 
   function mimeFromUrl(src) {
     const ext = (/\.(\w+)(?:[?#]|$)/.exec(new URL(src).pathname) || [])[1]?.toLowerCase();
@@ -642,7 +680,10 @@
       try {
         return await translateFromUrl(el, apiKey);
       } catch (urlErr) {
-        throw new Error(`${err.message} / Google → ${urlErr.message}`.slice(0, 400));
+        const hint = err.blocked && !(await store.get(KEY_PROXY, ''))
+          ? ' — האתר חוסם הורדת תמונות. הפתרון: שרת עזר (⚙ ← 4, הוראות ב-README)'
+          : ` / Google → ${urlErr.message}`;
+        throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
     const { pieces, sentW, sentH } = slice(bitmap);
