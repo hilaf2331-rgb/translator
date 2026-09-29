@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.24.0
+// @version      1.24.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1319,34 +1319,60 @@
         const g = c.getContext('2d', { willReadFrequently: true });
         g.drawImage(bitmap, x0, y0, w, h, 0, 0, w, h);
         const img = g.getImageData(0, 0, w, h), d = img.data;
-        const ink = new Uint8Array(w * h);
-        for (let i = 0; i < w * h; i++) {
+        const N = w * h;
+        const diff = new Uint16Array(N);
+        for (let i = 0; i < N; i++) {
           const k = i * 4;
-          ink[i] = Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B) > 90 ? 1 : 0;
+          diff[i] = Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B);
         }
-        // Ink connected to the edge of the area = outline / artwork: keep it.
-        const keep = new Uint8Array(w * h), stack = [];
-        const seed = (i) => { if (ink[i] && !keep[i]) { keep[i] = 1; stack.push(i); } };
-        for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
-        for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
-        while (stack.length) {
-          const i = stack.pop(), x = i % w;
-          if (x > 0) seed(i - 1);
-          if (x < w - 1) seed(i + 1);
-          if (i >= w) seed(i - w);
-          if (i < w * (h - 1)) seed(i + w);
+        // The text box itself (without the margin around it), in area coordinates.
+        const bx0 = Math.max(0, Math.round(b.x * W) - x0), bx1 = Math.min(w, Math.round((b.x + b.w) * W) - x0);
+        const by0 = Math.max(0, Math.round(b.y * H) - y0), by1 = Math.min(h, Math.round((b.y + b.h) * H) - y0);
+        const inBox = (i) => { const x = i % w, y = (i - x) / w; return x >= bx0 && x < bx1 && y >= by0 && y < by1; };
+        // How strongly the letters stand out: the letters are the strongest thing in the box.
+        // Faint things (a see-through bubble showing the drawing behind it, shading) stay under
+        // half of that and aren't taken for letters.
+        const strong = [];
+        for (let y = by0; y < by1; y++) {
+          for (let x = bx0; x < bx1; x++) if (diff[y * w + x] > 90) strong.push(diff[y * w + x]);
         }
-        // Everything else that is ink is lettering: paint it (and 2px around it, for the soft
-        // letter edges) in the bubble's color, without touching what we keep.
+        if (strong.length < 10) continue;
+        strong.sort((p, q) => p - q);
+        const T = Math.max(90, strong[Math.floor(strong.length * 0.9)] * 0.5);
+        const ink = new Uint8Array(N);
+        for (let i = 0; i < N; i++) ink[i] = diff[i] > T ? 1 : 0;
+        // Ink connected to the edge of the area = outline / artwork: keep it. Unless most of it is
+        // inside the text box, then it's letters that happen to touch something.
+        const keep = new Uint8Array(N), seen = new Uint8Array(N);
+        for (let s = 0; s < N; s++) {
+          const x = s % w, y = (s - x) / w;
+          if (!ink[s] || seen[s] || (x > 0 && x < w - 1 && y > 0 && y < h - 1)) continue;
+          const comp = [s], stack = [s];
+          seen[s] = 1;
+          let inside = 0;
+          while (stack.length) {
+            const i = stack.pop(), xx = i % w;
+            if (inBox(i)) inside++;
+            const next = [];
+            if (xx > 0) next.push(i - 1);
+            if (xx < w - 1) next.push(i + 1);
+            if (i >= w) next.push(i - w);
+            if (i < N - w) next.push(i + w);
+            for (const j of next) if (ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); comp.push(j); }
+          }
+          if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
+        }
+        // Everything else that is ink is lettering: paint over it (and 3px around it, for the soft
+        // letter edges), without touching what we keep.
         let erased = 0;
-        const paint = new Uint8Array(w * h);
+        const paint = new Uint8Array(N);
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
             const i = y * w + x;
             if (!ink[i] || keep[i]) continue;
             erased++;
-            for (let dy = -2; dy <= 2; dy++) {
-              for (let dx = -2; dx <= 2; dx++) {
+            for (let dy = -3; dy <= 3; dy++) {
+              for (let dx = -3; dx <= 3; dx++) {
                 const xx = x + dx, yy = y + dy;
                 if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
                 const j = yy * w + xx;
@@ -1356,8 +1382,32 @@
           }
         }
         if (!erased) continue; // nothing recognisable as letters: keep the simple box
-        for (let i = 0; i < w * h; i++) {
-          if (!paint[i]) continue;
+        // Fill the painted spots from their surroundings, inwards, so a bubble with a gradient or
+        // a see-through bubble keeps its look (instead of a flat blotch). Outline pixels don't
+        // count as surroundings; spots with nothing usable around get the bubble's color.
+        const known = new Uint8Array(N);
+        for (let i = 0; i < N; i++) known[i] = paint[i] || keep[i] || ink[i] ? 0 : 1;
+        let todo = [];
+        for (let i = 0; i < N; i++) if (paint[i]) todo.push(i);
+        for (let pass = 0; pass < 40 && todo.length; pass++) {
+          const done = [], left = [];
+          for (const i of todo) {
+            const x = i % w;
+            let r = 0, gg = 0, bb = 0, n = 0;
+            for (const j of [i - 1, i + 1, i - w, i + w, i - w - 1, i - w + 1, i + w - 1, i + w + 1]) {
+              if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || !known[j]) continue;
+              r += d[j * 4]; gg += d[j * 4 + 1]; bb += d[j * 4 + 2]; n++;
+            }
+            if (n) done.push([i, r / n, gg / n, bb / n]); else left.push(i);
+          }
+          for (const [i, r, gg, bb] of done) {
+            const k = i * 4;
+            d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1;
+          }
+          todo = left;
+          if (!done.length) break;
+        }
+        for (const i of todo) {
           const k = i * 4;
           d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
         }
@@ -1689,6 +1739,7 @@
     for (const el of deepQuery(document, 'div, span, a, figure, section, li')) {
       if (bgChecked.has(el) && !nearView.has(el)) continue;
       bgChecked.add(el);
+      if (el.closest('.ct-layer, #ct-ui')) continue; // our own translation layers, not comics
       if (el.offsetWidth < MIN_SHOWN_WIDTH || el.offsetHeight < 150) continue;
       loadBackground(el);
     }
