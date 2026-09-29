@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.23.0
+// @version      1.24.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -132,7 +132,8 @@
       font-family: "CT Comic", "Varela Round", -apple-system, Arial, sans-serif;
       text-transform: none; white-space: normal; word-break: break-word; border: 0;
     }
-    .ct-bubble.ct-hidden { opacity: 0; }
+    .ct-bubble.ct-hidden, .ct-patch.ct-hidden { opacity: 0; }
+    .ct-patch { position: absolute; pointer-events: none; background-size: 100% 100%; margin: 0; padding: 0; }
     .ct-status {
       position: absolute; pointer-events: none; top: 6px; left: 6px; max-width: 90%;
       background: rgba(0,0,0,.65); color: #fff; font: 12px -apple-system, Arial, sans-serif;
@@ -1115,6 +1116,7 @@
     }
     const out = await translateBitmap(bitmap, apiKey);
     markEdges(out, bitmap.height);
+    makePatches(bitmap, out);
     return out;
   }
 
@@ -1282,12 +1284,88 @@
     g.drawImage(B, 0, 0, B.width, partBsrc, 0, partA, W, partB);
     const stitched = await createImageBitmap(canvas);
     const out = await translateBitmap(stitched, apiKey);
+    makePatches(stitched, out);
     // Keep only bubbles on the cut (or close enough that each picture alone dropped them).
     const seamY = partA / total;
     const mA = (Math.max(0.004, Math.min(0.03, 40 / A.height)) * A.height + 10) / total;
     const mB = (Math.max(0.004, Math.min(0.03, 40 / B.height)) * B.height * bScale + 10) / total;
     const b = out.filter((x) => x.y < seamY + mB && x.y + x.h > seamY - mA);
     return { b, fa: partA / A.height, fb: partBsrc / B.height, blocked: out.blocked };
+  }
+
+  // ---------- Erasing only the letters ----------
+  // A plain rectangle over the text also paints over the bubble's outline when the bubble is
+  // tilted or oddly shaped. Instead, cut the area around the text out of the picture and paint
+  // over just the letters: anything dark (compared to the bubble's color) that reaches the edge of
+  // the area is outline or artwork and stays; what floats inside, not touching the edge, is
+  // lettering and gets the bubble's color. The result is shown under the Hebrew text.
+  // (Kept off the saved translations; rebuilt from the picture when needed.)
+  function makePatches(bitmap, bubbles) {
+    const W = bitmap.width, H = bitmap.height;
+    for (const b of bubbles) {
+      try {
+        const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(b.bg || '');
+        if (!m) continue;
+        const [R, G, B] = [Number(m[1]), Number(m[2]), Number(m[3])];
+        const bw = b.w * W, bh = b.h * H;
+        const x0 = Math.max(0, Math.floor(b.x * W - bw * 0.15 - 6));
+        const y0 = Math.max(0, Math.floor(b.y * H - bh * 0.2 - 6));
+        const x1 = Math.min(W, Math.ceil((b.x + b.w) * W + bw * 0.15 + 6));
+        const y1 = Math.min(H, Math.ceil((b.y + b.h) * H + bh * 0.2 + 6));
+        const w = x1 - x0, h = y1 - y0;
+        if (w < 8 || h < 8 || w * h > 2e6) continue;
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(bitmap, x0, y0, w, h, 0, 0, w, h);
+        const img = g.getImageData(0, 0, w, h), d = img.data;
+        const ink = new Uint8Array(w * h);
+        for (let i = 0; i < w * h; i++) {
+          const k = i * 4;
+          ink[i] = Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B) > 90 ? 1 : 0;
+        }
+        // Ink connected to the edge of the area = outline / artwork: keep it.
+        const keep = new Uint8Array(w * h), stack = [];
+        const seed = (i) => { if (ink[i] && !keep[i]) { keep[i] = 1; stack.push(i); } };
+        for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
+        for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
+        while (stack.length) {
+          const i = stack.pop(), x = i % w;
+          if (x > 0) seed(i - 1);
+          if (x < w - 1) seed(i + 1);
+          if (i >= w) seed(i - w);
+          if (i < w * (h - 1)) seed(i + w);
+        }
+        // Everything else that is ink is lettering: paint it (and 2px around it, for the soft
+        // letter edges) in the bubble's color, without touching what we keep.
+        let erased = 0;
+        const paint = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = y * w + x;
+            if (!ink[i] || keep[i]) continue;
+            erased++;
+            for (let dy = -2; dy <= 2; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const xx = x + dx, yy = y + dy;
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+                const j = yy * w + xx;
+                if (!keep[j]) paint[j] = 1;
+              }
+            }
+          }
+        }
+        if (!erased) continue; // nothing recognisable as letters: keep the simple box
+        for (let i = 0; i < w * h; i++) {
+          if (!paint[i]) continue;
+          const k = i * 4;
+          d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
+        }
+        g.putImageData(img, 0, 0);
+        const patch = { url: c.toDataURL('image/png'), x: x0 / W, y: y0 / H, w: w / W, h: h / H };
+        Object.defineProperty(b, 'patch', { value: patch, enumerable: false, configurable: true, writable: true });
+      } catch (_) { /* keep the simple box */ }
+    }
   }
 
   // Take each bubble's own colors, so the translation blends into white bubbles, colored
@@ -1443,8 +1521,20 @@
       if (sAbove) scheduleSeam(sAbove);
     }
     const { inner } = layerFor(el);
-    inner.querySelectorAll('.ct-bubble').forEach((e) => e.remove());
+    inner.querySelectorAll('.ct-bubble, .ct-patch').forEach((e) => e.remove());
     for (const b of bubbles) {
+      let patch = null;
+      if (b.patch) {
+        // The original picture with only the letters painted over (see makePatches).
+        patch = document.createElement('div');
+        patch.className = 'ct-patch';
+        patch.style.left = b.patch.x * 100 + '%';
+        patch.style.top = b.patch.y * 100 + '%';
+        patch.style.width = b.patch.w * 100 + '%';
+        patch.style.height = b.patch.h * 100 + '%';
+        patch.style.backgroundImage = `url(${b.patch.url})`;
+        inner.appendChild(patch);
+      }
       const div = document.createElement('div');
       div.className = 'ct-bubble';
       // Grow each box so it surely covers the original lettering (the model's box can be a
@@ -1457,12 +1547,21 @@
       div.textContent = b.t;
       if (b.n) div.dataset.lines = b.n;
       const bg = b.bg || '#fff';
-      div.style.background = bg;
       div.style.color = b.fg || '#111';
-      // Soft edge in the bubble's own color, so no box outline shows.
-      div.style.boxShadow = `0 0 3px 3px ${bg}`;
+      if (patch) {
+        div.style.background = 'transparent';
+        div.style.boxShadow = 'none';
+      } else {
+        div.style.background = bg;
+        // Soft edge in the bubble's own color, so no box outline shows.
+        div.style.boxShadow = `0 0 3px 3px ${bg}`;
+      }
       // Tap a bubble to peek at the original text.
-      div.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); div.classList.toggle('ct-hidden'); });
+      div.addEventListener('click', (e) => {
+        e.stopPropagation(); e.preventDefault();
+        div.classList.toggle('ct-hidden');
+        patch?.classList.toggle('ct-hidden');
+      });
       inner.appendChild(div);
     }
     if (el.seam) { resizeObs.observe(el.a); resizeObs.observe(el.b); } else resizeObs.observe(el);
@@ -1493,6 +1592,13 @@
       hit.t = Date.now();
       setStatus(el, null);
       drawBubbles(el, hit.b);
+      if (hit.b.length && !hit.b.some((b) => b.patch)) {
+        loadBitmap(el).then((bmp) => {
+          if (state.get(el)?.key !== key) return;
+          makePatches(bmp, hit.b);
+          if (el._ctBubbles === hit.b) drawBubbles(el, hit.b);
+        }).catch(() => { /* keep the simple boxes */ });
+      }
       return;
     }
     if (layers.has(el)) drawBubbles(el, []); // clear the previous page's bubbles
