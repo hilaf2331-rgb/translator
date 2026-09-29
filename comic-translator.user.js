@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.22.0
+// @version      1.23.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -17,6 +17,8 @@
 // @connect      api.anthropic.com
 // @connect      workers.dev
 // @connect      fonts.googleapis.com
+// @connect      api.github.com
+// @connect      raw.githubusercontent.com
 // @connect      fonts.gstatic.com
 // @connect      *
 // ==/UserScript==
@@ -148,6 +150,7 @@
     }
     #ct-ui button.ct-on { background: #7b3fe4; }
     #ct-ui button.ct-gear { background: #333; padding: 0; width: 44px; }
+    #ct-ui button.ct-update { background: #e0457b; }
   `;
   // GM.addStyle gets past sites whose security policy blocks added <style> tags;
   // our own <style> is a backup that we put back if the site's code removes it.
@@ -225,6 +228,59 @@
     loadComicFont();
   }
 
+  // ---------- Updates ----------
+  // GitHub's file server caches the script for a few minutes, so Userscripts' own update check
+  // can miss a new version. Ask GitHub directly (no cache) which commit is newest, read the
+  // version from that exact commit, and if it's newer show an "update" button that opens it,
+  // so installing is just 🧩 → Userscripts → Install.
+  const REPO = 'hilaf2331-rgb/translator';
+  const KEY_UPDATE_CHECK = 'lastUpdateCheck';
+  const newerThan = (a, b) => {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+    }
+    return false;
+  };
+
+  async function checkForUpdate(force) {
+    try {
+      const current = (typeof GM.info === 'object' && GM.info?.script?.version) || '';
+      if (!current) return false;
+      const last = Number(await store.get(KEY_UPDATE_CHECK, 0));
+      if (!force && Date.now() - last < 10 * 60 * 1000) return false; // at most every 10 minutes
+      store.set(KEY_UPDATE_CHECK, Date.now());
+      const head = await gmRequest({
+        method: 'GET',
+        url: `https://api.github.com/repos/${REPO}/commits/main`,
+        headers: { Accept: 'application/vnd.github.sha' },
+      });
+      const sha = (head.responseText || '').trim();
+      if (head.status !== 200 || !/^[0-9a-f]{40}$/.test(sha)) return false;
+      const url = `https://raw.githubusercontent.com/${REPO}/${sha}/comic-translator.user.js`;
+      const file = await gmRequest({ method: 'GET', url });
+      const latest = /@version\s+([\d.]+)/.exec(file.responseText || '')?.[1];
+      if (!latest || !newerThan(latest, current)) return false;
+      showUpdateButton(latest, url);
+      return true;
+    } catch (err) {
+      console.warn('[comic-translator] update check', err);
+      return false;
+    }
+  }
+
+  function showUpdateButton(latest, url) {
+    if (!isTop || ui.querySelector('.ct-update')) return;
+    const btn = document.createElement('button');
+    btn.className = 'ct-update';
+    btn.textContent = `עדכון ${latest} ⬇`;
+    btn.addEventListener('click', () => {
+      alert('נפתח דף עם הגרסה החדשה. שם לוחצים על 🧩 ← Userscripts ← Install, ואז חוזרים לכאן ומרעננים.');
+      window.open(url, '_blank');
+    });
+    ui.appendChild(btn);
+  }
+
   // ---------- Floating buttons (main page only) ----------
   const ui = document.createElement('div');
   const toggleBtn = document.createElement('button');
@@ -239,6 +295,7 @@
     document.documentElement.appendChild(ui);
     renderToggle();
     makeDraggable(ui);
+    checkForUpdate(false);
     // Some sites re-render the page and wipe out elements they don't know; put ours back.
     setInterval(() => {
       if (!ui.isConnected && !ui.dataset.hiddenByUser) document.documentElement.appendChild(ui);
@@ -258,7 +315,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -277,6 +334,10 @@
           await store.set(KEY_NOTES, storyNotes);
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
         }
+      }
+      else if (choice === '12') {
+        const found = await checkForUpdate(true);
+        if (!found) alert(`יש לך את הגרסה הכי חדשה (${version}) ✓`);
       }
       else if (choice === '11') {
         const lines = Object.values(glossary).map((g) => `${g.o} = ${g.h}`).join('\n');
