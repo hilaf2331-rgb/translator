@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.25.1
+// @version      1.25.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -740,7 +740,8 @@
       `Brand names, model names and technical terms an Israeli reader wouldn't know become the plain Hebrew word for ` +
       `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה), unless the name itself matters to the story. ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
-      `know, never letter-by-letter transliterations: coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
+      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", `+
+      `coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
       `"*משתעל*", not "קחח"; a groan of pain is "אאח" / "אוי"; a sigh is "אוף" / "הממ"; surprise is "הא?!"; ` +
       `a scream of pain ("ARGH!", "AAAH!") is "אאאח!", of anger or frustration "אררר!" / "אווף!", of fright "אאא!" ` +
       `(not "ארגח"). If a Hebrew word just spells the English sound in Hebrew letters, it's wrong: use the sound an ` +
@@ -928,11 +929,16 @@
     [/^(S+I+G+H+)$/, '*אנחה*'],
     [/^(W+O+W+|W+O+A+H+|W+H+O+A+)$/, 'וואו'],
     [/^(G+A+S+P+)$/, '*נושם בבהלה*'],
+    // moans and grunts (pain or pleasure)
+    [/^(U+N+G+H*|N+G+H+|H+N+G+H*|H+N+N+G+H*|N+N+G+H*|A+N+G+H+|E+N+G+H+|H+A+A+N+G*|H+A+N+G+H+|A+H+N+G*)$/, 'אהה'],
+    [/^(M+M+P+H+|M+P+H+|H+M+P+H+|N+N+H+|N+N+|M+N+H+|H+N+N+)$/, 'ממ'],
   ];
   // The model sometimes glues a stray English letter or two onto a Hebrew word while copying the
   // original ("sשלא"). Real English words (names, "OK") stand apart with spaces, so they stay.
   function cleanHebrew(t) {
     if (typeof t !== 'string') return t;
+    // Moans spelled out letter by letter in translations saved before the sounds list knew them.
+    if (/^\s*(אנג[הח]?|הנג[הח]?|אננג[הח]?)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אהה');
     return t
       .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
@@ -1403,7 +1409,77 @@
             if (keep[i]) keptIn++;
           }
         }
-        if (keptIn > inkIn * 0.12) continue;
+        if (keptIn > inkIn * 0.12) {
+          // The letters touch the outline or artwork, so they can't be told apart by what they touch.
+          // Then erase every stroke inside the text box (a little wider), and keep everything
+          // outside it (the outline around) and big solid areas inside it (like the bubble itself
+          // when the letters sit on its edge). Strokes are thin next to a line's height; solid
+          // areas are much thicker.
+          const lineH = bh / Math.max(1, b.n || 1);
+          const r = Math.max(6, Math.round(lineH * 0.3)), m2 = Math.max(3, Math.round(lineH * 0.15));
+          const cx0 = Math.max(0, bx0 - m2), cx1 = Math.min(w, bx1 + m2), cy0 = Math.max(0, by0 - m2), cy1 = Math.min(h, by1 + m2);
+          const grow = (src, horizontal) => {
+            const out = new Uint8Array(N);
+            const len = horizontal ? w : h, lines = horizontal ? h : w;
+            for (let a = 0; a < lines; a++) {
+              let last = -1e9;
+              const at = (k) => (horizontal ? a * w + k : k * w + a);
+              for (let k = 0; k < len; k++) { if (src[at(k)]) last = k; if (k - last <= r) out[at(k)] = 1; }
+              last = 1e9;
+              for (let k = len - 1; k >= 0; k--) { if (src[at(k)]) last = k; if (last - k <= r) out[at(k)] = 1; }
+            }
+            return out;
+          };
+          // Solid areas: what's left after shrinking the ink by r on every side (so strokes thinner
+          // than 2r disappear), grown back by r.
+          // Here anything not the bubble's color counts (light letters can be as far from the
+          // bubble's color as the art around it): size alone tells letters from art.
+          for (let i = 0; i < N; i++) ink[i] = diff[i] > 90 ? 1 : 0;
+          const gaps = new Uint8Array(N);
+          for (let i = 0; i < N; i++) gaps[i] = ink[i] ? 0 : 1;
+          const gapsNear = grow(grow(gaps, true), false);
+          const core = new Uint8Array(N);
+          for (let i = 0; i < N; i++) core[i] = ink[i] && !gapsNear[i] ? 1 : 0;
+          const big = grow(grow(core, true), false);
+          // The letters' own color: what fills the middle of the text box. Only strokes of about
+          // that color are erased, so a black outline or the art around keeps its place.
+          const ch = [[], [], []];
+          const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
+          const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
+          for (let y = qy0; y < qy1; y++) {
+            for (let x = qx0; x < qx1; x++) {
+              const i = y * w + x;
+              if (ink[i] && !big[i]) { ch[0].push(d[i * 4]); ch[1].push(d[i * 4 + 1]); ch[2].push(d[i * 4 + 2]); }
+            }
+          }
+          const lc = ch.map((a) => (a.length ? a.sort((p, q) => p - q)[a.length >> 1] : 0));
+          // Letter-colored: close to the letters' color or to a blend of it with the bubble's
+          // (the soft letter edges).
+          const vx = lc[0] - R, vy = lc[1] - G, vz = lc[2] - B, vv = vx * vx + vy * vy + vz * vz || 1;
+          const lettery = (i) => {
+            const k = i * 4, px = d[k] - R, py = d[k + 1] - G, pz = d[k + 2] - B;
+            const t = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / vv));
+            return Math.abs(px - t * vx) + Math.abs(py - t * vy) + Math.abs(pz - t * vz) < 80;
+          };
+          // Inside the bubble: reachable from the middle of the text box through the bubble's color
+          // and letter-colored pixels, never across the outline or other artwork.
+          const inside = new Uint8Array(N), st = [];
+          for (let y = qy0; y < qy1; y++) {
+            for (let x = qx0; x < qx1; x++) { const i = y * w + x; if (!inside[i] && (!ink[i] || lettery(i))) { inside[i] = 1; st.push(i); } }
+          }
+          while (st.length) {
+            const i = st.pop(), x = i % w;
+            for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+              if (j < 0 || j >= N || inside[j] || (ink[j] && !lettery(j))) continue;
+              inside[j] = 1; st.push(j);
+            }
+          }
+          for (let i = 0; i < N; i++) {
+            if (!ink[i]) continue;
+            const x = i % w, y = (i - x) / w;
+            keep[i] = x >= cx0 && x < cx1 && y >= cy0 && y < cy1 && !big[i] && inside[i] && lettery(i) ? 0 : 1;
+          }
+        }
         // Everything else that is ink is lettering. Letters have soft grey edges (and sometimes a
         // glow) fainter than the letters themselves: grow into those, up to 10px, then paint over
         // it all (and 3px around it), without touching what we keep.
@@ -1553,7 +1629,22 @@
             ring[0].push(d[i]); ring[1].push(d[i + 1]); ring[2].push(d[i + 2]);
           }
         }
-        const [r, gr, bl] = ring.map((ch) => ch.sort((p, q) => p - q)[ch.length >> 1]); // median
+        let [r, gr, bl] = ring.map((ch) => ch.sort((p, q) => p - q)[ch.length >> 1]); // median
+        // The color most of the text box itself is painted in is the bubble's (the letters take
+        // less room). This matters for small bubbles, where the frame is mostly the art around.
+        const bins = new Map();
+        let inner = 0;
+        for (let y = 4; y < S - 4; y++) {
+          for (let x = 4; x < S - 4; x++) {
+            const i = (y * S + x) * 4, key = (d[i] >> 5) * 64 + (d[i + 1] >> 5) * 8 + (d[i + 2] >> 5);
+            const e = bins.get(key) || [0, 0, 0, 0];
+            e[0]++; e[1] += d[i]; e[2] += d[i + 1]; e[3] += d[i + 2];
+            bins.set(key, e);
+            inner++;
+          }
+        }
+        const top = [...bins.values()].sort((p, q) => q[0] - p[0])[0];
+        if (top && top[0] >= inner * 0.35) [r, gr, bl] = [top[1], top[2], top[3]].map((v) => Math.round(v / top[0]));
         b.bg = `rgb(${r},${gr},${bl})`;
         b.fg = 0.299 * r + 0.587 * gr + 0.114 * bl > 140 ? '#111' : '#fff';
       } catch (_) { /* keep the default white bubble */ }
