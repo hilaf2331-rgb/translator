@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.18.1
+// @version      1.19.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -638,6 +638,8 @@
       `English idioms into Hebrew ones (e.g. "make a move" is not "עושה מהלך"). Avoid formal or literary words ` +
       `(אינני, הנני, כיצד, מדוע, אולם, על מנת); use the spoken ones (אני לא, איך, למה, אבל, כדי). ` +
       `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
+      `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
+      `יצא משליטה, not מחוק, which means wasted); when unsure, pick the plain accurate word. Meaning comes before style. ` +
       `Flirting and romance should sound natural, not cheesy. Narration boxes can be a little more written ` +
       `but still simple. Keep lines short so they fit the bubble. No nikud. ` +
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
