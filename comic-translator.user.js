@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.25.2
+// @version      1.25.3
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -740,7 +740,7 @@
       `Brand names, model names and technical terms an Israeli reader wouldn't know become the plain Hebrew word for ` +
       `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה), unless the name itself matters to the story. ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
-      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", `+
+      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", `+
       `coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
       `"*משתעל*", not "קחח"; a groan of pain is "אאח" / "אוי"; a sigh is "אוף" / "הממ"; surprise is "הא?!"; ` +
       `a scream of pain ("ARGH!", "AAAH!") is "אאאח!", of anger or frustration "אררר!" / "אווף!", of fright "אאא!" ` +
@@ -929,6 +929,9 @@
     [/^(S+I+G+H+)$/, '*אנחה*'],
     [/^(W+O+W+|W+O+A+H+|W+H+O+A+)$/, 'וואו'],
     [/^(G+A+S+P+)$/, '*נושם בבהלה*'],
+    // catching one's breath (after a kiss, coming out of water), relief
+    [/^(P+W+A+H+|P+U+A+H+|B+W+A+H+|P+H+U+A+H+|P+U+H+A+|P+A+H+|B+U+H+A+|H+U+H+A+|H+A+A+H+)$/, 'האח'],
+    [/^(P+H+E+W+|P+H+E+U+|F+E+W+)$/, 'פיו'],
     // moans and grunts (pain or pleasure)
     [/^(U+N+G+H*|N+G+H+|H+N+G+H*|H+N+N+G+H*|N+N+G+H*|A+N+G+H+|E+N+G+H+|H+A+A+N+G*|H+A+N+G+H+|A+H+N+G*)$/, 'אהה'],
     [/^(M+M+P+H+|M+P+H+|H+M+P+H+|N+N+H+|N+N+|M+N+H+|H+N+N+)$/, 'ממ'],
@@ -939,6 +942,7 @@
     if (typeof t !== 'string') return t;
     // Moans spelled out letter by letter in translations saved before the sounds list knew them.
     if (/^\s*(אנג[הח]?|הנג[הח]?|אננג[הח]?)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אהה');
+    if (/^\s*(פוו?אח|פווה|בוואח|פואה)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'האח');
     return t
       .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
