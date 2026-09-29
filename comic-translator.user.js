@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.24.4
+// @version      1.25.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -737,6 +737,8 @@
       `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
       `יצא משליטה, not מחוק, which means wasted); when unsure, pick the plain accurate word. Meaning comes before style. ` +
+      `Brand names, model names and technical terms an Israeli reader wouldn't know become the plain Hebrew word for ` +
+      `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה), unless the name itself matters to the story. ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
       `know, never letter-by-letter transliterations: coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
       `"*משתעל*", not "קחח"; a groan of pain is "אאח" / "אוי"; a sigh is "אוף" / "הממ"; surprise is "הא?!"; ` +
@@ -1372,11 +1374,23 @@
         // If much of the ink in the text box belongs to the drawing (letters touching a bubble or
         // artwork, e.g. outlined sound-effect text), the letters can't be told apart: use the
         // plain box instead, which covers them all.
+        const solid = (i) => {
+          const x = i % w, y = (i - x) / w, r = 5;
+          if (x < r || y < r || x >= w - r || y >= h - r) return false;
+          for (const j of [i - r, i + r, i - r * w, i + r * w, i - r * w - r, i - r * w + r, i + r * w - r, i + r * w + r]) {
+            if (!ink[j]) return false;
+          }
+          return true;
+        };
         let inkIn = 0, keptIn = 0;
         for (let y = by0; y < by1; y++) {
           for (let x = bx0; x < bx1; x++) {
             const i = y * w + x;
-            if (ink[i]) { inkIn++; if (keep[i]) keptIn++; }
+            // Only strokes count, not the inside of big solid areas (like the dark background that a
+            // corner of the text box reaches outside a round bubble): those aren't letters anyway.
+            if (!ink[i] || solid(i)) continue;
+            inkIn++;
+            if (keep[i]) keptIn++;
           }
         }
         if (keptIn > inkIn * 0.12) continue;
@@ -1418,6 +1432,43 @@
         // count as surroundings; spots with nothing usable around get the bubble's color.
         const known = new Uint8Array(N);
         for (let i = 0; i < N; i++) known[i] = paint[i] || keep[i] || ink[i] ? 0 : 1;
+        // How grainy the bubble is (some are printed with noise), to give the filled spots the same grain.
+        let grain = 0, gn = 0;
+        for (let i = 0; i < N - w - 1; i += 3) {
+          if (!known[i] || !known[i + 1] || !known[i + w]) continue;
+          const lum = (j) => d[j * 4] + d[j * 4 + 1] + d[j * 4 + 2];
+          grain += Math.abs(lum(i) - (lum(i + 1) + lum(i + w)) / 2) / 3; gn++;
+        }
+        grain = gn ? grain / gn : 0;
+        const filled = [];
+        // First, each spot gets the average color of the untouched pixels around it (up to 12px away):
+        // smooth, follows gradients, and doesn't smear the grain into streaks. Spots with too few
+        // untouched pixels around are filled from their neighbours below.
+        const S = new Float64Array((w + 1) * (h + 1) * 4);
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const i = y * w + x, o = ((y + 1) * (w + 1) + x + 1) * 4, up = (y * (w + 1) + x + 1) * 4, lf = o - 4, ul = up - 4;
+            const kn = known[i] ? 1 : 0;
+            for (let c = 0; c < 3; c++) S[o + c] = (kn ? d[i * 4 + c] : 0) + S[up + c] + S[lf + c] - S[ul + c];
+            S[o + 3] = kn + S[up + 3] + S[lf + 3] - S[ul + 3];
+          }
+        }
+        const avg = [];
+        for (let i = 0; i < N; i++) {
+          if (!paint[i]) continue;
+          const x = i % w, y = (i - x) / w, r = 12;
+          const xa = Math.max(0, x - r), xb = Math.min(w, x + r + 1), ya = Math.max(0, y - r), yb = Math.min(h, y + r + 1);
+          const A = (ya * (w + 1) + xa) * 4, Bq = (ya * (w + 1) + xb) * 4, C = (yb * (w + 1) + xa) * 4, D = (yb * (w + 1) + xb) * 4;
+          const n = S[D + 3] - S[Bq + 3] - S[C + 3] + S[A + 3];
+          if (n < 12) continue;
+          avg.push([i, (S[D] - S[Bq] - S[C] + S[A]) / n, (S[D + 1] - S[Bq + 1] - S[C + 1] + S[A + 1]) / n,
+            (S[D + 2] - S[Bq + 2] - S[C + 2] + S[A + 2]) / n]);
+        }
+        for (const [i, r, gg, bb] of avg) {
+          const k = i * 4;
+          d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1; paint[i] = 0;
+          filled.push(i);
+        }
         let todo = [];
         for (let i = 0; i < N; i++) if (paint[i]) todo.push(i);
         for (let pass = 0; pass < 40 && todo.length; pass++) {
@@ -1434,6 +1485,7 @@
           for (const [i, r, gg, bb] of done) {
             const k = i * 4;
             d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1;
+            filled.push(i);
           }
           todo = left;
           if (!done.length) break;
@@ -1441,6 +1493,13 @@
         for (const i of todo) {
           const k = i * 4;
           d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
+          filled.push(i);
+        }
+        if (grain > 1.5) {
+          for (const i of filled) {
+            const k = i * 4, n = (Math.random() + Math.random() + Math.random() - 1.5) * 2 * grain;
+            d[k] += n; d[k + 1] += n; d[k + 2] += n;
+          }
         }
         g.putImageData(img, 0, 0);
         done.push({ b, c, g, x0, y0, w, h });
