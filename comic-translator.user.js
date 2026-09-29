@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.24.2
+// @version      1.24.3
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1309,9 +1309,11 @@
         const [R, G, B] = [Number(m[1]), Number(m[2]), Number(m[3])];
         const bw = b.w * W, bh = b.h * H;
         const x0 = Math.max(0, Math.floor(b.x * W - bw * 0.15 - 6));
-        const y0 = Math.max(0, Math.floor(b.y * H - bh * 0.2 - 6));
+        // Room for a whole extra line above and below, in case the box missed one.
+        const my = Math.max(bh * 0.3, (bh / Math.max(1, b.n || 1)) * 1.4) + 6;
+        const y0 = Math.max(0, Math.floor(b.y * H - my));
         const x1 = Math.min(W, Math.ceil((b.x + b.w) * W + bw * 0.15 + 6));
-        const y1 = Math.min(H, Math.ceil((b.y + b.h) * H + bh * 0.2 + 6));
+        const y1 = Math.min(H, Math.ceil((b.y + b.h) * H + my));
         const w = x1 - x0, h = y1 - y0;
         if (w < 8 || h < 8 || w * h > 2e6) continue;
         const c = document.createElement('canvas');
@@ -1362,15 +1364,39 @@
           }
           if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
         }
-        // Everything else that is ink is lettering: paint over it (and 3px around it, for the soft
-        // letter edges), without touching what we keep.
-        let erased = 0;
+        // If much of the ink in the text box belongs to the drawing (letters touching a bubble or
+        // artwork, e.g. outlined sound-effect text), the letters can't be told apart: use the
+        // plain box instead, which covers them all.
+        let inkIn = 0, keptIn = 0;
+        for (let y = by0; y < by1; y++) {
+          for (let x = bx0; x < bx1; x++) {
+            const i = y * w + x;
+            if (ink[i]) { inkIn++; if (keep[i]) keptIn++; }
+          }
+        }
+        if (keptIn > inkIn * 0.12) continue;
+        // Everything else that is ink is lettering. Letters have soft grey edges (and sometimes a
+        // glow) fainter than the letters themselves: grow into those, up to 10px, then paint over
+        // it all (and 3px around it), without touching what we keep.
+        const letter = new Uint8Array(N);
+        let front = [];
+        for (let i = 0; i < N; i++) if (ink[i] && !keep[i]) { letter[i] = 1; front.push(i); }
+        const erased = front.length;
+        for (let step = 0; step < 10 && front.length; step++) {
+          const nextFront = [];
+          for (const i of front) {
+            const x = i % w;
+            for (const j of [i - 1, i + 1, i - w, i + w]) {
+              if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || letter[j] || keep[j] || diff[j] <= 18) continue;
+              letter[j] = 1; nextFront.push(j);
+            }
+          }
+          front = nextFront;
+        }
         const paint = new Uint8Array(N);
         for (let y = 0; y < h; y++) {
           for (let x = 0; x < w; x++) {
-            const i = y * w + x;
-            if (!ink[i] || keep[i]) continue;
-            erased++;
+            if (!letter[y * w + x]) continue;
             for (let dy = -3; dy <= 3; dy++) {
               for (let dx = -3; dx <= 3; dx++) {
                 const xx = x + dx, yy = y + dy;
