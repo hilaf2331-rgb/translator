@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.24.1
+// @version      1.24.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1624,6 +1624,7 @@
   const queue = [];
   let running = 0;
   let firstDone = false;
+  const retries = new Map(); // picture key -> automatic retries done after a download error
 
   // Looks at an element and translates it if it now shows a new comic picture.
   // Readers that flip pages by swapping the picture in the same element are handled here.
@@ -1689,6 +1690,16 @@
         .catch((err) => {
           console.warn('[comic-translator]', err);
           if (state.get(el)?.key === key) state.set(el, { key, error: true });
+          // A picture that couldn't be downloaded is often fine a few seconds later (the image
+          // server was busy or refused a burst of requests): try it again quietly, twice.
+          const tries = retries.get(key) || 0;
+          if (enabled && tries < 2 && /image|HTTP|network|timeout|fetch|שרת העזר/i.test(err.message) &&
+              !/api.key|authentication|permission|quota|מכסה/i.test(err.message)) {
+            retries.set(key, tries + 1);
+            setStatus(el, 'מנסה שוב…');
+            setTimeout(() => check(el, true), tries ? 15000 : 4000);
+            return;
+          }
           if (enabled) setStatus(el, 'שגיאה: ' + err.message);
           if (/api.key|authentication|permission|x-api-key/i.test(err.message)) {
             alert('מפתח ה-API לא עובד. אפשר להחליף אותו דרך כפתור ⚙');
