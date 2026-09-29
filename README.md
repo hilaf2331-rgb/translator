@@ -35,6 +35,7 @@
 4. **מומלץ מאוד, כדי לשמור על החשבון:** ב-[Google Cloud Console ← Credentials](https://console.cloud.google.com/apis/credentials):
    - לוחצים על המפתח ← **API restrictions** ← מסמנים רק **Gemini API** ← **Save**.
    - ב-**Billing ← Budgets & alerts** מגדירים התראה, למשל על 10$ בחודש.
+   - ב-[AI Studio](https://aistudio.google.com) ← **Spend** ← **Monthly spend cap** (העיפרון ✏️) קובעים תקרה, למשל 30 ₪. כשמגיעים אליה, התרגום נעצר עד החודש הבא.
 
 > ⚠️ **צריך לחבר כרטיס אשראי:** בלי בילינג, Google נותנים רק כ-20 תמונות ביום.
 
