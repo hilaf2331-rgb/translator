@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.21.1
+// @version      1.22.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -120,7 +120,7 @@
 
   // ---------- Styles ----------
   const CSS = `
-    .ct-layer { position: absolute; pointer-events: none; z-index: 2147483000; overflow: hidden; margin: 0; padding: 0; }
+    .ct-layer { position: absolute; pointer-events: none; z-index: 10; overflow: hidden; margin: 0; padding: 0; }
     .ct-inner { position: absolute; }
     .ct-bubble {
       position: absolute; pointer-events: auto; box-sizing: border-box;
@@ -664,7 +664,7 @@
         : `text in a language other than ${TARGET_LANG} (for example English, Korean, Japanese or Chinese)`) +
       ` (horizontal or vertical)` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
-      `.\nFor each one return ${coords} of the text area inside the bubble (covering every letter completely, including the first and last letter of each line and any punctuation, with a small margin), how many lines the original text is written on, ` +
+      `.\nFor each one return ${coords} of the text area inside the bubble (covering every letter completely, including the first and last letter of each line and any punctuation, with a small margin), how many lines the original text is written on, the original text as written, ` +
       `and its ${TARGET_LANG} translation. ` +
       // Style: how people actually talk, not dubbed-TV subtitles.
       `Write the ${TARGET_LANG} the way young Israelis really talk and text: short, casual, natural spoken ` +
@@ -731,10 +731,11 @@
         type: 'ARRAY',
         items: {
           type: 'OBJECT',
-          required: ['box_2d', 'lines', 'translation'],
+          required: ['box_2d', 'lines', 'original', 'translation'],
           properties: {
             box_2d: { type: 'ARRAY', items: { type: 'INTEGER' } },
             lines: { type: 'INTEGER' },
+            original: { type: 'STRING' },
             translation: { type: 'STRING' },
           },
         },
@@ -838,14 +839,48 @@
     learnNames(parsed.names);
     return (parsed.bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
-      .map(({ box_2d: [y0, x0, y1, x1], lines, translation }) => ({
+      .map(({ box_2d: [y0, x0, y1, x1], lines, original, translation }) => ({
         x: (x0 / 1000) * piece.w,
         y: (y0 / 1000) * piece.h,
         w: ((x1 - x0) / 1000) * piece.w,
         h: ((y1 - y0) / 1000) * piece.h,
         lines,
-        translation,
+        translation: fixSounds(original, translation),
       }));
+  }
+
+  // ----- Sounds: a fixed Hebrew for bubbles that are only a sound -----
+  // Models tend to spell sounds like "ARGH" in Hebrew letters (ארגח). When a bubble is nothing
+  // but known sounds, use the sound an Israeli reader expects instead of the model's version.
+  const SOUNDS = [
+    [/^(A+R+G+H+|A+R+G+|A+G+H+|G+A+H+|A{2,}H*|U+A+G+H+|K+H+|A+C+K+)$/, 'אאאח'], // screams
+    [/^(A|O|E)H+$/, 'אה'], // "Ah." / "Oh!" / "Eh?" 
+    [/^(U+G+H+|U+R+G+H+|B+L+E+H+|B+L+A+H+)$/, 'אוף'],
+    [/^(C+O+U+G+H+|K+E+G+H+|K+E+H+|K+A+H+K+|K+E+H+E+U+K+|C+O+F+|H+A+C+K+|G+E+H+|K+U+H+)$/, 'אחח'],
+    [/^(O+W+|O+U+C+H+|O+U+)$/, 'איי'],
+    [/^(H+U+H+)$/, 'הא'],
+    [/^(H+M+|H+M+M+|U+M+|U+M+M+|E+R+M+|M+M+)$/, 'הממ'],
+    [/^((H+A+)+H*|(H+E+)+H*|(K+E+)+K*|(K+U+)+K*)$/, 'חחח'],
+    [/^(S+I+G+H+)$/, '*אנחה*'],
+    [/^(W+O+W+|W+O+A+H+|W+H+O+A+)$/, 'וואו'],
+    [/^(G+A+S+P+)$/, '*נושם בבהלה*'],
+  ];
+  function fixSounds(original, translation) {
+    const text = String(original || '').trim();
+    if (!text || text.length > 60) return translation;
+    // Split into words and the punctuation between them ("KEGH, KEGH." -> KEGH / KEGH).
+    const parts = text.toUpperCase().split(/([^A-Z]+)/);
+    let hebrew = '', any = false;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (i % 2 === 1) { hebrew += part.replace(/\s+/g, ' '); continue; } // separators as they were
+      if (!part) continue;
+      const hit = SOUNDS.find(([re]) => re.test(part));
+      if (!hit) return translation; // a real word: keep the model's translation
+      hebrew += hit[1];
+      any = true;
+    }
+    return any ? hebrew.trim() : translation;
   }
 
   // ----- Quotas (mostly for Google's free tier) -----
@@ -935,13 +970,14 @@
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['x', 'y', 'w', 'h', 'lines', 'translation'],
+          required: ['x', 'y', 'w', 'h', 'lines', 'original', 'translation'],
           properties: {
             x: { type: 'number' },
             y: { type: 'number' },
             w: { type: 'number' },
             h: { type: 'number' },
             lines: { type: 'integer' },
+            original: { type: 'string' },
             translation: { type: 'string' },
           },
         },
@@ -989,7 +1025,7 @@
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const parsed = JSON.parse(text);
     learnNames(parsed.names);
-    return parsed.bubbles || [];
+    return (parsed.bubbles || []).map((b) => ({ ...b, translation: fixSounds(b.original, b.translation) }));
   }
 
   // Bubbles in pixel coordinates of the piece.
@@ -1352,7 +1388,7 @@
       div.className = 'ct-bubble';
       // Grow each box so it surely covers the original lettering (the model's box can be a
       // letter short). The extra area takes the bubble's own color, so it doesn't show.
-      const px = b.w * 0.08, py = b.h * 0.10;
+      const px = Math.min(b.w * 0.08, 0.02), py = Math.min(b.h * 0.10, 0.012); // big boxes: capped
       div.style.left = `calc(${(b.x - px) * 100}% - 3px)`;
       div.style.top = `calc(${(b.y - py) * 100}% - 2px)`;
       div.style.width = `calc(${(b.w + 2 * px) * 100}% + 6px)`;
