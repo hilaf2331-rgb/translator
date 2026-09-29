@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.0
+// @version      1.26.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -130,10 +130,11 @@
       background: #fff; color: #111; border-radius: 10px; padding: 0 2px; margin: 0;
       direction: rtl; overflow: visible; line-height: 1.22; font-weight: normal; letter-spacing: 0;
       font-family: "CT Comic", "Varela Round", -apple-system, Arial, sans-serif;
-      text-transform: none; white-space: normal; word-break: break-word; border: 0;
+      text-transform: none; white-space: normal; word-break: break-word; border: 0; z-index: 1;
     }
     .ct-bubble.ct-hidden, .ct-patch.ct-hidden { opacity: 0; }
-    .ct-patch { position: absolute; pointer-events: none; background-size: 100% 100%; margin: 0; padding: 0; }
+    /* under every text: a neighbour's erased area must not cover this bubble's words */
+    .ct-patch { position: absolute; pointer-events: none; background-size: 100% 100%; margin: 0; padding: 0; z-index: 0; }
     .ct-status {
       position: absolute; pointer-events: none; top: 6px; left: 6px; max-width: 90%;
       background: rgba(0,0,0,.65); color: #fff; font: 12px -apple-system, Arial, sans-serif;
@@ -726,6 +727,7 @@
         : `text in a language other than ${TARGET_LANG} (for example English, Korean, Japanese or Chinese)`) +
       ` (horizontal or vertical)` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
+      ` (short lines in a bubble, like "...Huh?", "Tay?!" or "Hey!", are dialogue, not sound effects: always include them)` +
       `.\nFor each one return ${coords} of the text area inside the bubble (covering every letter completely, including the first and last letter of each line and any punctuation, with a small margin), how many lines the original text is written on, the original text as written, ` +
       `and its ${TARGET_LANG} translation. ` +
       // Style: how people actually talk, not dubbed-TV subtitles.
@@ -1345,271 +1347,303 @@
     // areas' erasing already applied, and in the end each area also gets the later areas' erasing
     // (otherwise one area would show again letters the other one erased).
     const done = [];
-    for (const b of bubbles) {
+    bubbles: for (const b of bubbles) {
       try {
-        const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(b.bg || '');
-        if (!m) continue;
-        const [R, G, B] = [Number(m[1]), Number(m[2]), Number(m[3])];
-        const bw = b.w * W, bh = b.h * H;
-        const x0 = Math.max(0, Math.floor(b.x * W - bw * 0.15 - 6));
-        // Room for a whole extra line above and below, in case the box missed one.
-        const my = Math.max(bh * 0.3, (bh / Math.max(1, b.n || 1)) * 1.4) + 6;
-        const y0 = Math.max(0, Math.floor(b.y * H - my));
-        const x1 = Math.min(W, Math.ceil((b.x + b.w) * W + bw * 0.15 + 6));
-        const y1 = Math.min(H, Math.ceil((b.y + b.h) * H + my));
-        const w = x1 - x0, h = y1 - y0;
-        if (w < 8 || h < 8 || w * h > 2e6) continue;
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        const g = c.getContext('2d', { willReadFrequently: true });
-        g.drawImage(bitmap, x0, y0, w, h, 0, 0, w, h);
-        for (const p of done) g.drawImage(p.c, p.x0 - x0, p.y0 - y0);
-        const img = g.getImageData(0, 0, w, h), d = img.data;
-        const N = w * h;
-        const diff = new Uint16Array(N);
-        for (let i = 0; i < N; i++) {
-          const k = i * 4;
-          diff[i] = Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B);
-        }
-        // The text box itself (without the margin around it), in area coordinates.
-        const bx0 = Math.max(0, Math.round(b.x * W) - x0), bx1 = Math.min(w, Math.round((b.x + b.w) * W) - x0);
-        const by0 = Math.max(0, Math.round(b.y * H) - y0), by1 = Math.min(h, Math.round((b.y + b.h) * H) - y0);
-        const inBox = (i) => { const x = i % w, y = (i - x) / w; return x >= bx0 && x < bx1 && y >= by0 && y < by1; };
-        // How strongly the letters stand out: the letters are the strongest thing in the box.
-        // Faint things (a see-through bubble showing the drawing behind it, shading) stay under
-        // half of that and aren't taken for letters.
-        const strong = [];
-        for (let y = by0; y < by1; y++) {
-          for (let x = bx0; x < bx1; x++) if (diff[y * w + x] > 90) strong.push(diff[y * w + x]);
-        }
-        if (strong.length < 10) continue;
-        strong.sort((p, q) => p - q);
-        const T = Math.max(90, strong[Math.floor(strong.length * 0.9)] * 0.5);
-        const ink = new Uint8Array(N);
-        for (let i = 0; i < N; i++) ink[i] = diff[i] > T ? 1 : 0;
-        // Ink connected to the edge of the area = outline / artwork: keep it. Unless most of it is
-        // inside the text box, then it's letters that happen to touch something.
-        const keep = new Uint8Array(N), seen = new Uint8Array(N);
-        for (let s = 0; s < N; s++) {
-          const x = s % w, y = (s - x) / w;
-          if (!ink[s] || seen[s] || (x > 0 && x < w - 1 && y > 0 && y < h - 1)) continue;
-          const comp = [s], stack = [s];
-          seen[s] = 1;
-          let inside = 0;
-          while (stack.length) {
-            const i = stack.pop(), xx = i % w;
-            if (inBox(i)) inside++;
-            const next = [];
-            if (xx > 0) next.push(i - 1);
-            if (xx < w - 1) next.push(i + 1);
-            if (i >= w) next.push(i - w);
-            if (i < N - w) next.push(i + w);
-            for (const j of next) if (ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); comp.push(j); }
-          }
-          if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
-        }
-        // If much of the ink in the text box belongs to the drawing (letters touching a bubble or
-        // artwork, e.g. outlined sound-effect text), the letters can't be told apart: use the
-        // plain box instead, which covers them all.
-        const solid = (i) => {
-          const x = i % w, y = (i - x) / w, r = 5;
-          if (x < r || y < r || x >= w - r || y >= h - r) return false;
-          for (const j of [i - r, i + r, i - r * w, i + r * w, i - r * w - r, i - r * w + r, i + r * w - r, i + r * w + r]) {
-            if (!ink[j]) return false;
-          }
-          return true;
-        };
-        let inkIn = 0, keptIn = 0;
-        for (let y = by0; y < by1; y++) {
-          for (let x = bx0; x < bx1; x++) {
-            const i = y * w + x;
-            // Only strokes count, not the inside of big solid areas (like the dark background that a
-            // corner of the text box reaches outside a round bubble): those aren't letters anyway.
-            if (!ink[i] || solid(i)) continue;
-            inkIn++;
-            if (keep[i]) keptIn++;
-          }
-        }
-        if (keptIn > inkIn * 0.12) {
-          // The letters touch the outline or artwork, so they can't be told apart by what they touch.
-          // Then erase every stroke inside the text box (a little wider), and keep everything
-          // outside it (the outline around) and big solid areas inside it (like the bubble itself
-          // when the letters sit on its edge). Strokes are thin next to a line's height; solid
-          // areas are much thicker.
-          const lineH = bh / Math.max(1, b.n || 1);
-          const r = Math.max(6, Math.round(lineH * 0.3)), m2 = Math.max(3, Math.round(lineH * 0.15));
-          const cx0 = Math.max(0, bx0 - m2), cx1 = Math.min(w, bx1 + m2), cy0 = Math.max(0, by0 - m2), cy1 = Math.min(h, by1 + m2);
-          const grow = (src, horizontal) => {
-            const out = new Uint8Array(N);
-            const len = horizontal ? w : h, lines = horizontal ? h : w;
-            for (let a = 0; a < lines; a++) {
-              let last = -1e9;
-              const at = (k) => (horizontal ? a * w + k : k * w + a);
-              for (let k = 0; k < len; k++) { if (src[at(k)]) last = k; if (k - last <= r) out[at(k)] = 1; }
-              last = 1e9;
-              for (let k = len - 1; k >= 0; k--) { if (src[at(k)]) last = k; if (last - k <= r) out[at(k)] = 1; }
-            }
-            return out;
-          };
-          // Solid areas: what's left after shrinking the ink by r on every side (so strokes thinner
-          // than 2r disappear), grown back by r.
-          // Here anything not the bubble's color counts (light letters can be as far from the
-          // bubble's color as the art around it): size alone tells letters from art.
-          for (let i = 0; i < N; i++) ink[i] = diff[i] > 90 ? 1 : 0;
-          const gaps = new Uint8Array(N);
-          for (let i = 0; i < N; i++) gaps[i] = ink[i] ? 0 : 1;
-          const gapsNear = grow(grow(gaps, true), false);
-          const core = new Uint8Array(N);
-          for (let i = 0; i < N; i++) core[i] = ink[i] && !gapsNear[i] ? 1 : 0;
-          const big = grow(grow(core, true), false);
-          // The letters' own color: what fills the middle of the text box. Only strokes of about
-          // that color are erased, so a black outline or the art around keeps its place.
-          const ch = [[], [], []];
-          const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
-          const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
-          for (let y = qy0; y < qy1; y++) {
-            for (let x = qx0; x < qx1; x++) {
-              const i = y * w + x;
-              if (ink[i] && !big[i]) { ch[0].push(d[i * 4]); ch[1].push(d[i * 4 + 1]); ch[2].push(d[i * 4 + 2]); }
-            }
-          }
-          const lc = ch.map((a) => (a.length ? a.sort((p, q) => p - q)[a.length >> 1] : 0));
-          // Letter-colored: close to the letters' color or to a blend of it with the bubble's
-          // (the soft letter edges).
-          const vx = lc[0] - R, vy = lc[1] - G, vz = lc[2] - B, vv = vx * vx + vy * vy + vz * vz || 1;
-          const lettery = (i) => {
-            const k = i * 4, px = d[k] - R, py = d[k + 1] - G, pz = d[k + 2] - B;
-            const t = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / vv));
-            return Math.abs(px - t * vx) + Math.abs(py - t * vy) + Math.abs(pz - t * vz) < 80;
-          };
-          // Inside the bubble: reachable from the middle of the text box through the bubble's color
-          // and letter-colored pixels, never across the outline or other artwork.
-          const inside = new Uint8Array(N), st = [];
-          for (let y = qy0; y < qy1; y++) {
-            for (let x = qx0; x < qx1; x++) { const i = y * w + x; if (!inside[i] && (!ink[i] || lettery(i))) { inside[i] = 1; st.push(i); } }
-          }
-          while (st.length) {
-            const i = st.pop(), x = i % w;
-            for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
-              if (j < 0 || j >= N || inside[j] || (ink[j] && !lettery(j))) continue;
-              inside[j] = 1; st.push(j);
-            }
-          }
+        let side = 0.15; // extra room at the sides, as a fraction of the box width
+        for (;;) {
+          const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(b.bg || '');
+          if (!m) continue bubbles;
+          const [R, G, B] = [Number(m[1]), Number(m[2]), Number(m[3])];
+          const bw = b.w * W, bh = b.h * H;
+          const x0 = Math.max(0, Math.floor(b.x * W - bw * side - 6));
+          // Room for a whole extra line above and below, in case the box missed one.
+          const my = Math.max(bh * 0.3, (bh / Math.max(1, b.n || 1)) * 1.4) + 6;
+          const y0 = Math.max(0, Math.floor(b.y * H - my));
+          const x1 = Math.min(W, Math.ceil((b.x + b.w) * W + bw * side + 6));
+          const y1 = Math.min(H, Math.ceil((b.y + b.h) * H + my));
+          const w = x1 - x0, h = y1 - y0;
+          if (w < 8 || h < 8 || w * h > 2e6) continue bubbles;
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          const g = c.getContext('2d', { willReadFrequently: true });
+          g.drawImage(bitmap, x0, y0, w, h, 0, 0, w, h);
+          for (const p of done) g.drawImage(p.c, p.x0 - x0, p.y0 - y0);
+          const img = g.getImageData(0, 0, w, h), d = img.data;
+          const N = w * h;
+          const diff = new Uint16Array(N);
           for (let i = 0; i < N; i++) {
-            if (!ink[i]) continue;
-            const x = i % w, y = (i - x) / w;
-            keep[i] = x >= cx0 && x < cx1 && y >= cy0 && y < cy1 && !big[i] && inside[i] && lettery(i) ? 0 : 1;
+            const k = i * 4;
+            diff[i] = Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B);
           }
-        }
-        // Everything else that is ink is lettering. Letters have soft grey edges (and sometimes a
-        // glow) fainter than the letters themselves: grow into those, up to 10px, then paint over
-        // it all (and 3px around it), without touching what we keep.
-        const letter = new Uint8Array(N);
-        let front = [];
-        for (let i = 0; i < N; i++) if (ink[i] && !keep[i]) { letter[i] = 1; front.push(i); }
-        const erased = front.length;
-        for (let step = 0; step < 10 && front.length; step++) {
-          const nextFront = [];
-          for (const i of front) {
-            const x = i % w;
-            for (const j of [i - 1, i + 1, i - w, i + w]) {
-              if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || letter[j] || keep[j] || diff[j] <= 18) continue;
-              letter[j] = 1; nextFront.push(j);
+          // The text box itself (without the margin around it), in area coordinates.
+          const bx0 = Math.max(0, Math.round(b.x * W) - x0), bx1 = Math.min(w, Math.round((b.x + b.w) * W) - x0);
+          const by0 = Math.max(0, Math.round(b.y * H) - y0), by1 = Math.min(h, Math.round((b.y + b.h) * H) - y0);
+          const inBox = (i) => { const x = i % w, y = (i - x) / w; return x >= bx0 && x < bx1 && y >= by0 && y < by1; };
+          // How strongly the letters stand out: the letters are the strongest thing in the box.
+          // Faint things (a see-through bubble showing the drawing behind it, shading) stay under
+          // half of that and aren't taken for letters.
+          const strong = [];
+          for (let y = by0; y < by1; y++) {
+            for (let x = bx0; x < bx1; x++) if (diff[y * w + x] > 90) strong.push(diff[y * w + x]);
+          }
+          if (strong.length < 10) continue bubbles;
+          strong.sort((p, q) => p - q);
+          const T = Math.max(90, strong[Math.floor(strong.length * 0.9)] * 0.5);
+          const ink = new Uint8Array(N);
+          for (let i = 0; i < N; i++) ink[i] = diff[i] > T ? 1 : 0;
+          // Ink connected to the edge of the area = outline / artwork: keep it. Unless most of it is
+          // inside the text box, then it's letters that happen to touch something.
+          const keep = new Uint8Array(N), seen = new Uint8Array(N);
+          for (let s = 0; s < N; s++) {
+            const x = s % w, y = (s - x) / w;
+            if (!ink[s] || seen[s] || (x > 0 && x < w - 1 && y > 0 && y < h - 1)) continue;
+            const comp = [s], stack = [s];
+            seen[s] = 1;
+            let inside = 0;
+            while (stack.length) {
+              const i = stack.pop(), xx = i % w;
+              if (inBox(i)) inside++;
+              const next = [];
+              if (xx > 0) next.push(i - 1);
+              if (xx < w - 1) next.push(i + 1);
+              if (i >= w) next.push(i - w);
+              if (i < N - w) next.push(i + w);
+              for (const j of next) if (ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); comp.push(j); }
+            }
+            if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
+          }
+          // Lines running out of the area at its sides (the box was too narrow): many separate bits of
+          // ink cut by the left or right edge, level with the text. Try again with a wider area.
+          if (side < 1) {
+            let runs = 0;
+            for (const x of [x0 > 0 ? 0 : -1, x1 < W ? w - 1 : -1]) {
+              if (x < 0) continue;
+              let on = false;
+              for (let y = by0; y < by1; y++) {
+                const hit = keep[y * w + x] === 1;
+                if (hit && !on) runs++;
+                on = hit;
+              }
+            }
+            if (runs >= 4) { side = side < 0.5 ? 0.6 : 1.2; continue; }
+          }
+          // If much of the ink in the text box belongs to the drawing (letters touching a bubble or
+          // artwork, e.g. outlined sound-effect text), the letters can't be told apart: use the
+          // plain box instead, which covers them all.
+          const solid = (i) => {
+            const x = i % w, y = (i - x) / w, r = 5;
+            if (x < r || y < r || x >= w - r || y >= h - r) return false;
+            for (const j of [i - r, i + r, i - r * w, i + r * w, i - r * w - r, i - r * w + r, i + r * w - r, i + r * w + r]) {
+              if (!ink[j]) return false;
+            }
+            return true;
+          };
+          let inkIn = 0, keptIn = 0;
+          for (let y = by0; y < by1; y++) {
+            for (let x = bx0; x < bx1; x++) {
+              const i = y * w + x;
+              // Only strokes count, not the inside of big solid areas (like the dark background that a
+              // corner of the text box reaches outside a round bubble): those aren't letters anyway.
+              if (!ink[i] || solid(i)) continue;
+              inkIn++;
+              if (keep[i]) keptIn++;
             }
           }
-          front = nextFront;
-        }
-        const paint = new Uint8Array(N);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            if (!letter[y * w + x]) continue;
-            for (let dy = -3; dy <= 3; dy++) {
-              for (let dx = -3; dx <= 3; dx++) {
-                const xx = x + dx, yy = y + dy;
-                if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-                const j = yy * w + xx;
-                if (!keep[j]) paint[j] = 1;
+          const touching = keptIn > inkIn * 0.12;
+            if (touching) {
+            // The letters touch the outline or artwork, so they can't be told apart by what they touch.
+            // Then erase every stroke inside the text box (a little wider), and keep everything
+            // outside it (the outline around) and big solid areas inside it (like the bubble itself
+            // when the letters sit on its edge). Strokes are thin next to a line's height; solid
+            // areas are much thicker.
+            const lineH = bh / Math.max(1, b.n || 1);
+            const r = Math.max(6, Math.round(lineH * 0.3)), m2 = Math.max(3, Math.round(lineH * 0.15));
+            const cx0 = Math.max(0, bx0 - m2), cx1 = Math.min(w, bx1 + m2), cy0 = Math.max(0, by0 - m2), cy1 = Math.min(h, by1 + m2);
+            const grow = (src, horizontal) => {
+              const out = new Uint8Array(N);
+              const len = horizontal ? w : h, lines = horizontal ? h : w;
+              for (let a = 0; a < lines; a++) {
+                let last = -1e9;
+                const at = (k) => (horizontal ? a * w + k : k * w + a);
+                for (let k = 0; k < len; k++) { if (src[at(k)]) last = k; if (k - last <= r) out[at(k)] = 1; }
+                last = 1e9;
+                for (let k = len - 1; k >= 0; k--) { if (src[at(k)]) last = k; if (last - k <= r) out[at(k)] = 1; }
+              }
+              return out;
+            };
+            // Solid areas: what's left after shrinking the ink by r on every side (so strokes thinner
+            // than 2r disappear), grown back by r.
+            // Here anything not the bubble's color counts (light letters can be as far from the
+            // bubble's color as the art around it): size alone tells letters from art.
+            for (let i = 0; i < N; i++) ink[i] = diff[i] > 90 ? 1 : 0;
+            const gaps = new Uint8Array(N);
+            for (let i = 0; i < N; i++) gaps[i] = ink[i] ? 0 : 1;
+            const gapsNear = grow(grow(gaps, true), false);
+            const core = new Uint8Array(N);
+            for (let i = 0; i < N; i++) core[i] = ink[i] && !gapsNear[i] ? 1 : 0;
+            const big = grow(grow(core, true), false);
+            // The letters' own color: what fills the middle of the text box. Only strokes of about
+            // that color are erased, so a black outline or the art around keeps its place.
+            const ch = [[], [], []];
+            const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
+            const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
+            for (let y = qy0; y < qy1; y++) {
+              for (let x = qx0; x < qx1; x++) {
+                const i = y * w + x;
+                if (ink[i] && !big[i]) { ch[0].push(d[i * 4]); ch[1].push(d[i * 4 + 1]); ch[2].push(d[i * 4 + 2]); }
+              }
+            }
+            const lc = ch.map((a) => (a.length ? a.sort((p, q) => p - q)[a.length >> 1] : 0));
+            // Letter-colored: close to the letters' color or to a blend of it with the bubble's
+            // (the soft letter edges).
+            const vx = lc[0] - R, vy = lc[1] - G, vz = lc[2] - B, vv = vx * vx + vy * vy + vz * vz || 1;
+            const lettery = (i) => {
+              const k = i * 4, px = d[k] - R, py = d[k + 1] - G, pz = d[k + 2] - B;
+              const t = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / vv));
+              return Math.abs(px - t * vx) + Math.abs(py - t * vy) + Math.abs(pz - t * vz) < 80;
+            };
+            // Inside the bubble: reachable from the middle of the text box through the bubble's color
+            // and letter-colored pixels, never across the outline or other artwork.
+            const inside = new Uint8Array(N), st = [];
+            for (let y = qy0; y < qy1; y++) {
+              for (let x = qx0; x < qx1; x++) { const i = y * w + x; if (!inside[i] && (!ink[i] || lettery(i))) { inside[i] = 1; st.push(i); } }
+            }
+            while (st.length) {
+              const i = st.pop(), x = i % w;
+              for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+                if (j < 0 || j >= N || inside[j] || (ink[j] && !lettery(j))) continue;
+                inside[j] = 1; st.push(j);
+              }
+            }
+            for (let i = 0; i < N; i++) {
+              if (!ink[i]) continue;
+              const x = i % w, y = (i - x) / w;
+              keep[i] = x >= cx0 && x < cx1 && y >= cy0 && y < cy1 && !big[i] && inside[i] && lettery(i) ? 0 : 1;
+            }
+          }
+          // Everything else that is ink is lettering. Letters have soft grey edges (and sometimes a
+          // glow) fainter than the letters themselves: grow into those, up to 10px, then paint over
+          // it all (and 3px around it), without touching what we keep.
+          const letter = new Uint8Array(N);
+          let front = [];
+          for (let i = 0; i < N; i++) if (ink[i] && !keep[i]) { letter[i] = 1; front.push(i); }
+          const erased = front.length;
+          for (let step = 0; step < 10 && front.length; step++) {
+            const nextFront = [];
+            for (const i of front) {
+              const x = i % w;
+              for (const j of [i - 1, i + 1, i - w, i + w]) {
+                if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || letter[j] || keep[j] || diff[j] <= 18) continue;
+                letter[j] = 1; nextFront.push(j);
+              }
+            }
+            front = nextFront;
+          }
+          const paint = new Uint8Array(N);
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              if (!letter[y * w + x]) continue;
+              for (let dy = -3; dy <= 3; dy++) {
+                for (let dx = -3; dx <= 3; dx++) {
+                  const xx = x + dx, yy = y + dy;
+                  if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+                  const j = yy * w + xx;
+                  if (!keep[j]) paint[j] = 1;
+                }
               }
             }
           }
-        }
-        if (!erased) continue; // nothing recognisable as letters: keep the simple box
-        // Fill the painted spots from their surroundings, inwards, so a bubble with a gradient or
-        // a see-through bubble keeps its look (instead of a flat blotch). Outline pixels don't
-        // count as surroundings; spots with nothing usable around get the bubble's color.
-        const known = new Uint8Array(N);
-        for (let i = 0; i < N; i++) known[i] = paint[i] || keep[i] || ink[i] ? 0 : 1;
-        // How grainy the bubble is (some are printed with noise), to give the filled spots the same grain.
-        let grain = 0, gn = 0;
-        for (let i = 0; i < N - w - 1; i += 3) {
-          if (!known[i] || !known[i + 1] || !known[i + w]) continue;
-          const lum = (j) => d[j * 4] + d[j * 4 + 1] + d[j * 4 + 2];
-          grain += Math.abs(lum(i) - (lum(i + 1) + lum(i + w)) / 2) / 3; gn++;
-        }
-        grain = gn ? grain / gn : 0;
-        const filled = [];
-        // First, each spot gets the average color of the untouched pixels around it (up to 12px away):
-        // smooth, follows gradients, and doesn't smear the grain into streaks. Spots with too few
-        // untouched pixels around are filled from their neighbours below.
-        const S = new Float64Array((w + 1) * (h + 1) * 4);
-        for (let y = 0; y < h; y++) {
-          for (let x = 0; x < w; x++) {
-            const i = y * w + x, o = ((y + 1) * (w + 1) + x + 1) * 4, up = (y * (w + 1) + x + 1) * 4, lf = o - 4, ul = up - 4;
-            const kn = known[i] ? 1 : 0;
-            for (let c = 0; c < 3; c++) S[o + c] = (kn ? d[i * 4 + c] : 0) + S[up + c] + S[lf + c] - S[ul + c];
-            S[o + 3] = kn + S[up + 3] + S[lf + 3] - S[ul + 3];
+          if (!erased) continue bubbles; // nothing recognisable as letters: keep the simple box
+          // Fill the painted spots from their surroundings, inwards, so a bubble with a gradient or
+          // a see-through bubble keeps its look (instead of a flat blotch). Outline pixels don't
+          // count as surroundings; spots with nothing usable around get the bubble's color.
+          const known = new Uint8Array(N);
+          for (let i = 0; i < N; i++) known[i] = paint[i] || keep[i] || ink[i] ? 0 : 1;
+          // How grainy the bubble is (some are printed with noise), to give the filled spots the same grain.
+          let grain = 0, gn = 0;
+          for (let i = 0; i < N - w - 1; i += 3) {
+            if (!known[i] || !known[i + 1] || !known[i + w]) continue;
+            const lum = (j) => d[j * 4] + d[j * 4 + 1] + d[j * 4 + 2];
+            grain += Math.abs(lum(i) - (lum(i + 1) + lum(i + w)) / 2) / 3; gn++;
           }
-        }
-        const avg = [];
-        for (let i = 0; i < N; i++) {
-          if (!paint[i]) continue;
-          const x = i % w, y = (i - x) / w, r = 12;
-          const xa = Math.max(0, x - r), xb = Math.min(w, x + r + 1), ya = Math.max(0, y - r), yb = Math.min(h, y + r + 1);
-          const A = (ya * (w + 1) + xa) * 4, Bq = (ya * (w + 1) + xb) * 4, C = (yb * (w + 1) + xa) * 4, D = (yb * (w + 1) + xb) * 4;
-          const n = S[D + 3] - S[Bq + 3] - S[C + 3] + S[A + 3];
-          if (n < 12) continue;
-          avg.push([i, (S[D] - S[Bq] - S[C] + S[A]) / n, (S[D + 1] - S[Bq + 1] - S[C + 1] + S[A + 1]) / n,
-            (S[D + 2] - S[Bq + 2] - S[C + 2] + S[A + 2]) / n]);
-        }
-        for (const [i, r, gg, bb] of avg) {
-          const k = i * 4;
-          d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1; paint[i] = 0;
-          filled.push(i);
-        }
-        let todo = [];
-        for (let i = 0; i < N; i++) if (paint[i]) todo.push(i);
-        for (let pass = 0; pass < 40 && todo.length; pass++) {
-          const done = [], left = [];
-          for (const i of todo) {
-            const x = i % w;
-            let r = 0, gg = 0, bb = 0, n = 0;
-            for (const j of [i - 1, i + 1, i - w, i + w, i - w - 1, i - w + 1, i + w - 1, i + w + 1]) {
-              if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || !known[j]) continue;
-              r += d[j * 4]; gg += d[j * 4 + 1]; bb += d[j * 4 + 2]; n++;
+          grain = gn ? grain / gn : 0;
+          const filled = [];
+          // First, each spot gets the average color of the untouched pixels around it (up to 12px away):
+          // smooth, follows gradients, and doesn't smear the grain into streaks. Spots with too few
+          // untouched pixels around are filled from their neighbours below.
+          const S = new Float64Array((w + 1) * (h + 1) * 4);
+          for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+              const i = y * w + x, o = ((y + 1) * (w + 1) + x + 1) * 4, up = (y * (w + 1) + x + 1) * 4, lf = o - 4, ul = up - 4;
+              const kn = known[i] ? 1 : 0;
+              for (let c = 0; c < 3; c++) S[o + c] = (kn ? d[i * 4 + c] : 0) + S[up + c] + S[lf + c] - S[ul + c];
+              S[o + 3] = kn + S[up + 3] + S[lf + 3] - S[ul + 3];
             }
-            if (n) done.push([i, r / n, gg / n, bb / n]); else left.push(i);
           }
-          for (const [i, r, gg, bb] of done) {
+          const avg = [];
+          for (let i = 0; i < N; i++) {
+            if (!paint[i]) continue;
+            const x = i % w, y = (i - x) / w, r = 12;
+            const xa = Math.max(0, x - r), xb = Math.min(w, x + r + 1), ya = Math.max(0, y - r), yb = Math.min(h, y + r + 1);
+            const A = (ya * (w + 1) + xa) * 4, Bq = (ya * (w + 1) + xb) * 4, C = (yb * (w + 1) + xa) * 4, D = (yb * (w + 1) + xb) * 4;
+            const n = S[D + 3] - S[Bq + 3] - S[C + 3] + S[A + 3];
+            if (n < 12) continue;
+            avg.push([i, (S[D] - S[Bq] - S[C] + S[A]) / n, (S[D + 1] - S[Bq + 1] - S[C + 1] + S[A + 1]) / n,
+              (S[D + 2] - S[Bq + 2] - S[C + 2] + S[A + 2]) / n]);
+          }
+          for (const [i, r, gg, bb] of avg) {
             const k = i * 4;
-            d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1;
+            d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1; paint[i] = 0;
             filled.push(i);
           }
-          todo = left;
-          if (!done.length) break;
-        }
-        for (const i of todo) {
-          const k = i * 4;
-          d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
-          filled.push(i);
-        }
-        if (grain > 1.5) {
-          for (const i of filled) {
-            const k = i * 4, n = (Math.random() + Math.random() + Math.random() - 1.5) * 2 * grain;
-            d[k] += n; d[k + 1] += n; d[k + 2] += n;
+          let todo = [];
+          for (let i = 0; i < N; i++) if (paint[i]) todo.push(i);
+          for (let pass = 0; pass < 40 && todo.length; pass++) {
+            const done = [], left = [];
+            for (const i of todo) {
+              const x = i % w;
+              let r = 0, gg = 0, bb = 0, n = 0;
+              for (const j of [i - 1, i + 1, i - w, i + w, i - w - 1, i - w + 1, i + w - 1, i + w + 1]) {
+                if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || !known[j]) continue;
+                r += d[j * 4]; gg += d[j * 4 + 1]; bb += d[j * 4 + 2]; n++;
+              }
+              if (n) done.push([i, r / n, gg / n, bb / n]); else left.push(i);
+            }
+            for (const [i, r, gg, bb] of done) {
+              const k = i * 4;
+              d[k] = r; d[k + 1] = gg; d[k + 2] = bb; d[k + 3] = 255; known[i] = 1;
+              filled.push(i);
+            }
+            todo = left;
+            if (!done.length) break;
           }
+          for (const i of todo) {
+            const k = i * 4;
+            d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
+            filled.push(i);
+          }
+          if (grain > 1.5) {
+            for (const i of filled) {
+              const k = i * 4, n = (Math.random() + Math.random() + Math.random() - 1.5) * 2 * grain;
+              d[k] += n; d[k + 1] += n; d[k + 2] += n;
+            }
+          }
+          // Did it work? If much of what stood out as letters in the text box still does (e.g. white
+          // letters with a dark outline over mixed art), use the plain box: readable beats pretty.
+          let before = 0, after = 0;
+          for (let y = by0; y < by1; y++) {
+            for (let x = bx0; x < bx1; x++) {
+              const i = y * w + x, k = i * 4;
+              if (diff[i] <= T || solid(i)) continue; // letters only, not big areas of art
+              before++;
+              if (Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B) > T) after++;
+            }
+          }
+          if (!touching && before && after > before * 0.35) continue bubbles;
+          g.putImageData(img, 0, 0);
+          done.push({ b, c, g, x0, y0, w, h });
+          break;
         }
-        g.putImageData(img, 0, 0);
-        done.push({ b, c, g, x0, y0, w, h });
       } catch (_) { /* keep the simple box */ }
     }
     for (const [n, p] of done.entries()) {
@@ -1820,6 +1854,9 @@
       if (b.n) div.dataset.lines = b.n;
       const bg = b.bg || '#fff';
       div.style.color = b.fg || '#111';
+      // A faint halo in the bubble's color: invisible on the bubble, but keeps the words readable
+      // where they run over art or a dark box.
+      div.style.textShadow = `0 0 2px ${bg}, 0 0 4px ${bg}, 0 0 6px ${bg}`;
       if (patch) {
         div.style.background = 'transparent';
         div.style.boxShadow = 'none';
