@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.20.0
+// @version      1.21.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -664,7 +664,7 @@
         : `text in a language other than ${TARGET_LANG} (for example English, Korean, Japanese or Chinese)`) +
       ` (horizontal or vertical)` +
       (TRANSLATE_SFX ? ', plus sound effects' : '; skip sound effects and background signs that are not important to the story') +
-      `.\nFor each one return ${coords} of the text area inside the bubble (tight around the letters), how many lines the original text is written on, ` +
+      `.\nFor each one return ${coords} of the text area inside the bubble (covering every letter completely, including the first and last letter of each line and any punctuation, with a small margin), how many lines the original text is written on, ` +
       `and its ${TARGET_LANG} translation. ` +
       // Style: how people actually talk, not dubbed-TV subtitles.
       `Write the ${TARGET_LANG} the way young Israelis really talk and text: short, casual, natural spoken ` +
@@ -1317,7 +1317,8 @@
     // Aim for the size of the original lettering (same number of lines in the same space),
     // then shrink only if the Hebrew needs more room.
     const lines = Number(el.dataset.lines) || 0;
-    let size = lines > 0 ? Math.min(44, (boxH / lines) * 0.95) : Math.min(28, boxH * 0.6);
+    // (the box is ~1.2× the original text height because of the margin added in drawBubbles)
+    let size = lines > 0 ? Math.min(44, (boxH / 1.2 / lines) * 0.95) : Math.min(28, boxH * 0.45);
     size = Math.max(9, size);
     el.style.fontSize = size + 'px';
     while (size > 8 && (el.scrollHeight > boxH + 1 || el.scrollWidth > boxW + 1)) {
@@ -1343,21 +1344,23 @@
     }
     const { inner } = layerFor(el);
     inner.querySelectorAll('.ct-bubble').forEach((e) => e.remove());
-    const PAD = 0.006; // grow each box a little so it covers the original lettering
     for (const b of bubbles) {
       const div = document.createElement('div');
       div.className = 'ct-bubble';
-      div.style.left = (b.x - PAD) * 100 + '%';
-      div.style.top = (b.y - PAD / 4) * 100 + '%';
-      div.style.width = (b.w + PAD * 2) * 100 + '%';
-      div.style.height = (b.h + PAD / 2) * 100 + '%';
+      // Grow each box so it surely covers the original lettering (the model's box can be a
+      // letter short). The extra area takes the bubble's own color, so it doesn't show.
+      const px = b.w * 0.08, py = b.h * 0.10;
+      div.style.left = `calc(${(b.x - px) * 100}% - 3px)`;
+      div.style.top = `calc(${(b.y - py) * 100}% - 2px)`;
+      div.style.width = `calc(${(b.w + 2 * px) * 100}% + 6px)`;
+      div.style.height = `calc(${(b.h + 2 * py) * 100}% + 4px)`;
       div.textContent = b.t;
       if (b.n) div.dataset.lines = b.n;
       const bg = b.bg || '#fff';
       div.style.background = bg;
       div.style.color = b.fg || '#111';
       // Soft edge in the bubble's own color, so no box outline shows.
-      div.style.boxShadow = `0 0 6px 7px ${bg}`;
+      div.style.boxShadow = `0 0 3px 3px ${bg}`;
       // Tap a bubble to peek at the original text.
       div.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); div.classList.toggle('ct-hidden'); });
       inner.appendChild(div);
