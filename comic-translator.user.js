@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.25.0
+// @version      1.25.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -929,7 +929,17 @@
     [/^(W+O+W+|W+O+A+H+|W+H+O+A+)$/, 'וואו'],
     [/^(G+A+S+P+)$/, '*נושם בבהלה*'],
   ];
+  // The model sometimes glues a stray English letter or two onto a Hebrew word while copying the
+  // original ("sשלא"). Real English words (names, "OK") stand apart with spaces, so they stay.
+  function cleanHebrew(t) {
+    if (typeof t !== 'string') return t;
+    return t
+      .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
+      .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
+  }
+
   function fixSounds(original, translation) {
+    translation = cleanHebrew(translation);
     const text = String(original || '').trim();
     if (!text || text.length > 60) return translation;
     // Split into words and the punctuation between them ("KEGH, KEGH." -> KEGH / KEGH).
@@ -1694,7 +1704,7 @@
       div.style.top = `calc(${(b.y - py) * 100}% - 2px)`;
       div.style.width = `calc(${(b.w + 2 * px) * 100}% + 6px)`;
       div.style.height = `calc(${(b.h + 2 * py) * 100}% + 4px)`;
-      div.textContent = b.t;
+      div.textContent = cleanHebrew(b.t);
       if (b.n) div.dataset.lines = b.n;
       const bg = b.bg || '#fff';
       div.style.color = b.fg || '#111';
