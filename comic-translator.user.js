@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.17.0
+// @version      1.18.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -26,9 +26,6 @@
 
   // ---------- Settings ----------
   const GEMINI_MODEL = 'gemini-3.8-flash'; // used with a Google key (starts with AQ.)
-  // Google's free tier (no credit card) allows only ~20 requests a day on the model above but
-  // ~500 on this lighter one, so when the daily quota runs out we switch to it by ourselves.
-  const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
   const CLAUDE_MODEL = 'claude-opus-5';     // used with an Anthropic key (starts with sk-ant-)
   // Language of the comic (⚙ → 8). "auto" lets the model recognise it by itself.
   const SOURCES = [
@@ -810,10 +807,10 @@
 
   async function geminiPiece(piece, apiKey) {
     const part = { inlineData: { mimeType: 'image/jpeg', data: piece.data } };
-    const models = [GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter((m) => exhausted[m] !== today());
-    if (!models.length) {
-      throw new Error('נגמרה המכסה היומית החינמית של Google. היא מתחדשת מחר, או שאפשר לחבר כרטיס אשראי לחשבון כדי להמשיך.');
-    }
+    // Always the best model: lighter ones translate noticeably worse.
+    const QUOTA_MSG = 'הגעת למכסה היומית של Google. אם אין כרטיס אשראי מחובר, מחברים ב-AI Studio; אחרת היא מתחדשת מחר.';
+    const models = [GEMINI_MODEL].filter((m) => exhausted[m] !== today());
+    if (!models.length) throw new Error(QUOTA_MSG);
     for (const model of models) {
       for (let attempt = 0; ; attempt++) {
         try {
@@ -834,7 +831,7 @@
         }
       }
     }
-    throw new Error('נגמרה המכסה היומית החינמית של Google. היא מתחדשת מחר, או שאפשר לחבר כרטיס אשראי לחשבון כדי להמשיך.');
+    throw new Error(QUOTA_MSG);
   }
 
   // Last resort for sites whose image server refuses our downloads: hand Gemini the link and
@@ -946,6 +943,23 @@
         throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
+    const out = await translateBitmap(bitmap, apiKey);
+    markEdges(out, bitmap.height);
+    return out;
+  }
+
+  // Bubbles touching the top/bottom edge of a picture. On sites that cut a chapter into many
+  // stacked pictures, those may continue in the next/previous picture (see "Seams").
+  function markEdges(bubbles, H) {
+    const m = Math.max(0.004, Math.min(0.03, 40 / H));
+    for (const b of bubbles) {
+      const e = (b.y < m ? 't' : '') + (b.y + b.h > 1 - m ? 'b' : '');
+      if (e) b.e = e;
+    }
+  }
+
+  // Translates a whole picture (cut into pieces if it's tall). Bubbles come back as fractions.
+  async function translateBitmap(bitmap, apiKey) {
     const { pieces, sentW, sentH, pieceH, crop } = slice(bitmap);
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
@@ -1024,6 +1038,88 @@
     return out;
   }
 
+  // ---------- Seams ----------
+  // Many sites cut a chapter into stacked pictures, and a bubble can sit right on the cut: half in
+  // one picture, half in the next. Each picture alone would translate its half. So when a
+  // picture has a bubble on its edge and another picture sits right against that edge, we
+  // stitch the two around the cut, translate that as one picture, and draw the bubbles that
+  // cross the cut over both pictures.
+  const seams = new Map(); // "keyA||keyB" -> seam
+
+  function neighbor(el, dir) {
+    const r = el.getBoundingClientRect();
+    if (!r.width) return null;
+    for (const o of deepQuery(document, 'img, canvas')) {
+      if (o === el || !isComic(o)) continue;
+      const q = o.getBoundingClientRect();
+      const overlap = Math.min(r.right, q.right) - Math.max(r.left, q.left);
+      if (overlap < 0.8 * Math.min(r.width, q.width)) continue;
+      const gap = dir === 'below' ? q.top - r.bottom : r.top - q.bottom;
+      if (Math.abs(gap) <= 8) return o;
+    }
+    return null;
+  }
+
+  function seamFor(a, b) {
+    const key = keyOf(a) + '||' + keyOf(b);
+    let sm = seams.get(key);
+    if (!sm) {
+      sm = { seam: true, a, b, key, fa: 0.5, fb: 0.5, get isConnected() { return a.isConnected && b.isConnected; } };
+      seams.set(key, sm);
+    }
+    return sm;
+  }
+
+  function redrawPair(sm) {
+    for (const el of [sm.a, sm.b]) if (el._ctBubbles && layers.has(el)) drawBubbles(el, el._ctBubbles);
+  }
+
+  function scheduleSeam(sm) {
+    if (sm.state) return;
+    const hit = cache['seam:' + sm.key];
+    if (hit) {
+      sm.state = 'done'; sm.fa = hit.fa; sm.fb = hit.fb;
+      drawBubbles(sm, hit.b);
+      redrawPair(sm);
+      return;
+    }
+    sm.state = 'pending';
+    translateSeam(sm)
+      .then((res) => {
+        if (!res.blocked) { cache['seam:' + sm.key] = { t: Date.now(), b: res.b, fa: res.fa, fb: res.fb }; saveCache(); }
+        sm.state = 'done'; sm.fa = res.fa; sm.fb = res.fb;
+        if (enabled) { drawBubbles(sm, res.b); redrawPair(sm); }
+      })
+      .catch((err) => {
+        console.warn('[comic-translator] seam', err);
+        sm.state = 'failed'; // show each picture's own halves instead
+        if (enabled) redrawPair(sm);
+      });
+  }
+
+  async function translateSeam(sm) {
+    const apiKey = await store.get(KEY_API, '');
+    const [A, B] = await Promise.all([loadBitmap(sm.a), loadBitmap(sm.b)]);
+    const W = A.width, bScale = W / B.width;
+    const partA = Math.min(A.height, Math.max(Math.round(A.height * 0.5), 900));
+    const partBsrc = Math.min(B.height, Math.max(Math.round(B.height * 0.5), 900));
+    const partB = Math.round(partBsrc * bScale);
+    const total = partA + partB;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = total;
+    const g = canvas.getContext('2d');
+    g.drawImage(A, 0, A.height - partA, W, partA, 0, 0, W, partA);
+    g.drawImage(B, 0, 0, B.width, partBsrc, 0, partA, W, partB);
+    const stitched = await createImageBitmap(canvas);
+    const out = await translateBitmap(stitched, apiKey);
+    // Keep only bubbles on the cut (or close enough that each picture alone dropped them).
+    const seamY = partA / total;
+    const mA = (Math.max(0.004, Math.min(0.03, 40 / A.height)) * A.height + 10) / total;
+    const mB = (Math.max(0.004, Math.min(0.03, 40 / B.height)) * B.height * bScale + 10) / total;
+    const b = out.filter((x) => x.y < seamY + mB && x.y + x.h > seamY - mA);
+    return { b, fa: partA / A.height, fb: partBsrc / B.height, blocked: out.blocked };
+  }
+
   // Take each bubble's own colors, so the translation blends into white bubbles, colored
   // bubbles and dark caption boxes alike.
   function addColors(bitmap, bubbles) {
@@ -1083,7 +1179,15 @@
 
   function positionLayer(el, { layer, inner }) {
     if (!el.isConnected) { layer.style.display = 'none'; return; }
-    const r = el.getBoundingClientRect();
+    let r;
+    if (el.seam) {
+      // From the part of the upper picture we used, down to the part of the lower one.
+      const ra = el.a.getBoundingClientRect(), rb = el.b.getBoundingClientRect();
+      const top = ra.top + ra.height * (1 - el.fa), bottom = rb.top + rb.height * el.fb;
+      r = { left: ra.left, top, width: ra.width, height: bottom - top };
+    } else {
+      r = el.getBoundingClientRect();
+    }
     if (r.width === 0 || r.height === 0) { layer.style.display = 'none'; return; }
     // <html> is almost always unpositioned, so the layer is placed in page coordinates.
     let ox = -scrollX, oy = -scrollY;
@@ -1097,7 +1201,7 @@
     layer.style.top = r.top - oy + 'px';
     layer.style.width = r.width + 'px';
     layer.style.height = r.height + 'px';
-    const c = contentRect(el, r);
+    const c = el.seam ? { x: 0, y: 0, w: r.width, h: r.height } : contentRect(el, r);
     inner.style.left = c.x + 'px';
     inner.style.top = c.y + 'px';
     inner.style.width = c.w + 'px';
@@ -1153,6 +1257,20 @@
   }
 
   function drawBubbles(el, bubbles) {
+    if (!el.seam) {
+      el._ctBubbles = bubbles;
+      const hasTop = bubbles.some((b) => b.e?.includes('t'));
+      const hasBottom = bubbles.some((b) => b.e?.includes('b'));
+      const below = hasBottom && neighbor(el, 'below');
+      const above = hasTop && neighbor(el, 'above');
+      const sBelow = below ? seamFor(el, below) : null;
+      const sAbove = above ? seamFor(above, el) : null;
+      bubbles = bubbles.filter((b) =>
+        !((b.e?.includes('b') && sBelow && sBelow.state !== 'failed') ||
+          (b.e?.includes('t') && sAbove && sAbove.state !== 'failed')));
+      if (sBelow) scheduleSeam(sBelow);
+      if (sAbove) scheduleSeam(sAbove);
+    }
     const { inner } = layerFor(el);
     inner.querySelectorAll('.ct-bubble').forEach((e) => e.remove());
     const PAD = 0.006; // grow each box a little so it covers the original lettering
@@ -1174,7 +1292,7 @@
       div.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); div.classList.toggle('ct-hidden'); });
       inner.appendChild(div);
     }
-    resizeObs.observe(el);
+    if (el.seam) { resizeObs.observe(el.a); resizeObs.observe(el.b); } else resizeObs.observe(el);
     repositionAll();
   }
 
@@ -1329,6 +1447,7 @@
     nearView.clear();
     state = new WeakMap();
     for (const el of [...layers.keys()]) removeLayer(el);
+    seams.clear();
     watched = new WeakSet(); // they belonged to the old observer
     bgChecked = new WeakSet();
   }
