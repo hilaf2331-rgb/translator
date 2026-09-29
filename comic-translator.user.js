@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.19.1
+// @version      1.20.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -87,6 +87,23 @@
   // Sexual-content filter: Google's default, or "relaxed" = block only clearly explicit (⚙ → 10).
   const KEY_SEXFILTER = 'relaxedSexFilter';
   let relaxedSexFilter = !!(await store.get(KEY_SEXFILTER, false));
+  // How names were spelled in Hebrew on this site, so a character keeps one spelling (⚙ → 11).
+  const KEY_NAMES = `names:${host}`;
+  let glossary = JSON.parse(await store.get(KEY_NAMES, '{}')); // lower-case original -> { o, h }
+  const saveGlossary = () => store.set(KEY_NAMES, JSON.stringify(glossary));
+  function learnNames(list) {
+    let changed = false;
+    for (const n of list || []) {
+      const o = String(n?.original || '').trim(), h = String(n?.hebrew || '').trim();
+      const k = o.toLowerCase();
+      if (!o || !h || o.length > 40 || glossary[k]) continue; // the first spelling wins
+      glossary[k] = { o, h };
+      changed = true;
+    }
+    const keys = Object.keys(glossary);
+    if (keys.length > 150) for (const k of keys.slice(0, keys.length - 150)) delete glossary[k];
+    if (changed) saveGlossary();
+  }
   const ECONOMY_EDGE = 1024; // long edge of each piece in economy mode (normal: MAX_EDGE)
   // Settings a model turned out not to accept, remembered so we stop sending them.
   const KEY_UNSUPPORTED = 'unsupportedOptions';
@@ -241,7 +258,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -259,6 +276,24 @@
           storyNotes = txt.trim().slice(0, 500);
           await store.set(KEY_NOTES, storyNotes);
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
+        }
+      }
+      else if (choice === '11') {
+        const lines = Object.values(glossary).map((g) => `${g.o} = ${g.h}`).join('\n');
+        const txt = prompt(
+          'איך השמות נכתבים בעברית באתר הזה. שורה לכל שם, בצורה: Tae = טאי\n' +
+          'אפשר לתקן כתיב, להוסיף או למחוק שורות. כדי למחוק הכל, מוחקים את כל הטקסט:',
+          lines
+        );
+        if (txt !== null) {
+          glossary = {};
+          for (const line of txt.split(/\n|;/)) {
+            const [o, ...rest] = line.split('=');
+            const h = rest.join('=').trim();
+            if (o && o.trim() && h) glossary[o.trim().toLowerCase()] = { o: o.trim(), h };
+          }
+          saveGlossary();
+          alert(`נשמר ✓ ${Object.keys(glossary).length} שמות. חל על תמונות חדשות (לתרגם מחדש: ⚙ ← 2).`);
         }
       }
       else if (choice === '10') {
@@ -650,6 +685,12 @@
       `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
       `Use the characters' names and how they are drawn; only when there is no clue at all, use masculine forms. ` +
       (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. ` : '') +
+      // Names: one Hebrew spelling per character across the whole story.
+      (Object.keys(glossary).length
+        ? `Names already used in this story; always spell them exactly like this: ` +
+          Object.values(glossary).slice(-80).map((g) => `${g.o} = ${g.h}`).join(', ') + `. `
+        : '') +
+      `In "names", list every person or place name you wrote in Hebrew (original spelling and Hebrew spelling). ` +
       (softenSwears
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
         : `Translate profanity, insults and crude slang faithfully, with the same intensity as the original ` +
@@ -693,6 +734,14 @@
             lines: { type: 'INTEGER' },
             translation: { type: 'STRING' },
           },
+        },
+      },
+      names: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          required: ['original', 'hebrew'],
+          properties: { original: { type: 'STRING' }, hebrew: { type: 'STRING' } },
         },
       },
     },
@@ -782,7 +831,9 @@
     if (blockedBy) { piece.blocked = blockedBy; return []; }
     if (!cand?.content?.parts) return []; // empty
     const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
-    return (JSON.parse(text).bubbles || [])
+    const parsed = JSON.parse(text);
+    learnNames(parsed.names);
+    return (parsed.bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
       .map(({ box_2d: [y0, x0, y1, x1], lines, translation }) => ({
         x: (x0 / 1000) * piece.w,
@@ -892,6 +943,15 @@
           },
         },
       },
+      names: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['original', 'hebrew'],
+          properties: { original: { type: 'string' }, hebrew: { type: 'string' } },
+        },
+      },
     },
   };
 
@@ -924,7 +984,9 @@
     );
     if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    return JSON.parse(text).bubbles || [];
+    const parsed = JSON.parse(text);
+    learnNames(parsed.names);
+    return parsed.bubbles || [];
   }
 
   // Bubbles in pixel coordinates of the piece.
@@ -1309,6 +1371,7 @@
   let state = new WeakMap();
   const queue = [];
   let running = 0;
+  let firstDone = false;
 
   // Looks at an element and translates it if it now shows a new comic picture.
   // Readers that flip pages by swapping the picture in the same element are handled here.
@@ -1337,7 +1400,10 @@
   }
 
   async function pump() {
-    while (enabled && running < (slowDown ? 2 : MAX_PARALLEL) && queue.length) {
+    // On a site with no names learned yet, let the first picture finish alone, so the names it
+    // learns are used by all the others (the same spelling for a character from the start).
+    const limit = slowDown ? 2 : (Object.keys(glossary).length || firstDone ? MAX_PARALLEL : 1);
+    while (enabled && running < limit && queue.length) {
       // Translate the picture closest to where you are reading first (ones just below come
       // before ones far away or already scrolled past).
       const dist = (q) => {
@@ -1369,7 +1435,7 @@
             alert('מפתח ה-API לא עובד. אפשר להחליף אותו דרך כפתור ⚙');
           }
         })
-        .finally(() => { running--; pump(); });
+        .finally(() => { running--; firstDone = true; pump(); });
     }
   }
 
