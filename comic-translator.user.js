@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.4
+// @version      1.26.5
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -93,12 +93,16 @@
   const KEY_NAMES = `names:${host}`;
   let glossary = JSON.parse(await store.get(KEY_NAMES, '{}')); // lower-case original -> { o, h }
   const saveGlossary = () => store.set(KEY_NAMES, JSON.stringify(glossary));
+  // Honorifics aren't names: their spelling is fixed in the prompt, and a wrong one saved here
+  // (e.g. "Hyung = יונג") would be repeated everywhere.
+  const HONORIFIC = /^(hyung|hyungnim|hyeong|noona|nuna|oppa|unnie|eonni|sunbae|sunbaenim|seonbae|hoobae|ahjussi|ajussi|ajumma|ahjumma|senpai|sensei|sama|san|kun|chan|ssi|nim)$/i;
+  for (const k of Object.keys(glossary)) if (HONORIFIC.test(k)) delete glossary[k];
   function learnNames(list) {
     let changed = false;
     for (const n of list || []) {
       const o = String(n?.original || '').trim(), h = String(n?.hebrew || '').trim();
       const k = o.toLowerCase();
-      if (!o || !h || o.length > 40 || glossary[k]) continue; // the first spelling wins
+      if (!o || !h || o.length > 40 || glossary[k] || HONORIFIC.test(o)) continue; // the first spelling wins
       glossary[k] = { o, h };
       changed = true;
     }
@@ -750,6 +754,10 @@
       `a scream of pain ("ARGH!", "AAAH!") is "אאאח!", of anger or frustration "אררר!" / "אווף!", of fright "אאא!" ` +
       `(not "ארגח"). If a Hebrew word just spells the English sound in Hebrew letters, it's wrong: use the sound an ` +
       `Israeli would actually make. ` +
+      `Korean (and Japanese) honorifics stay as fans know them, always spelled the same way, never translated ` +
+      `into "אחי"/"אחות": hyung = היונג, hyungnim = היונגנים, noona = נונה, oppa = אופה, unnie = אוני, ` +
+      `sunbae = סונבה, hoobae = הובה, -ssi = -שי, -nim = -נים, ahjussi = אג'ושי, ajumma = אג'ומה, ` +
+      `senpai = סנפאי, -kun = -קון, -chan = -צ'אן, -san = -סאן. ` +
       `Read the bubbles as one conversation, in reading order. A reply often leaves out words said in the ` +
       `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
@@ -959,8 +967,21 @@
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
   }
 
+  // Honorifics the model sometimes spells differently from one bubble to the next.
+  const HONORIFICS = [[/\bHYUNG(?!NIM)/i, /(^|[^\u05D0-\u05EA])(יונג|היונג|הייונג|היונג׳|הְיוּנג)(?![\u05D0-\u05EA])/g, 'היונג'],
+    [/\bNOONA\b/i, /(^|[^\u05D0-\u05EA])(נונא|נוּנָה)(?![\u05D0-\u05EA])/g, 'נונה'],
+    [/\bUNNIE\b/i, /(^|[^\u05D0-\u05EA])(אונני|אוניי)(?![\u05D0-\u05EA])/g, 'אוני'],
+    [/\bOPPA\b/i, /(^|[^\u05D0-\u05EA])(אופא|אופפה|אוֹפָּה)(?![\u05D0-\u05EA])/g, 'אופה']];
+  function fixHonorifics(original, translation) {
+    if (typeof translation !== 'string') return translation;
+    for (const [en, he, right] of HONORIFICS) {
+      if (en.test(String(original || ''))) translation = translation.replace(he, (m, pre) => pre + right);
+    }
+    return translation;
+  }
+
   function fixSounds(original, translation) {
-    translation = cleanHebrew(translation);
+    translation = fixHonorifics(original, cleanHebrew(translation));
     const text = String(original || '').trim();
     if (!text || text.length > 60) return translation;
     // Split into words and the punctuation between them ("KEGH, KEGH." -> KEGH / KEGH).
