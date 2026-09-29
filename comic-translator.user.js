@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.3
+// @version      1.26.4
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -174,6 +174,7 @@
     { name: 'Karantina', weight: 700, label: 'קרנטינה – צר, לבועות קטנות' },
   ];
   const KEY_FONT = 'fontChoice';
+  const DEFAULT_FONT = 2; // Varela Round: clean and easy to read (the choice is saved by position in the list)
   const FONT_FACE = 'CT Comic';
   const FONT_CHARS = Array.from({ length: 0x5eb - 0x5d0 }, (_, i) => String.fromCharCode(0x5d0 + i)).join('') +
     '0123456789.,!?…-־\'"״׳*()[]:;~♡♥ ';
@@ -189,7 +190,7 @@
   let fontFace = null;
   async function loadComicFont() {
     try {
-      const font = FONTS[Number(await store.get(KEY_FONT, 0))] || FONTS[0];
+      const font = FONTS[Number(await store.get(KEY_FONT, DEFAULT_FONT))] || FONTS[DEFAULT_FONT];
       const cacheKey = `font:${font.name}:${font.weight}`;
       let b64 = await store.get(cacheKey, '');
       if (!b64) {
@@ -221,7 +222,7 @@
   }
 
   async function askForFont() {
-    const cur = Number(await store.get(KEY_FONT, 0)) || 0;
+    const cur = Number(await store.get(KEY_FONT, DEFAULT_FONT)) || 0;
     const list = FONTS.map((f, i) => `${i + 1} – ${f.label}${i === cur ? ' ✓' : ''}`).join('\n');
     const choice = prompt(`איזה פונט לתרגום?\n${list}`, String(cur + 1));
     const i = Number(choice) - 1;
