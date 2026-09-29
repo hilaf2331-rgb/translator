@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.24.3
+// @version      1.24.4
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1302,6 +1302,10 @@
   // (Kept off the saved translations; rebuilt from the picture when needed.)
   function makePatches(bitmap, bubbles) {
     const W = bitmap.width, H = bitmap.height;
+    // Areas of neighbouring texts can overlap. Each area starts from the picture with the earlier
+    // areas' erasing already applied, and in the end each area also gets the later areas' erasing
+    // (otherwise one area would show again letters the other one erased).
+    const done = [];
     for (const b of bubbles) {
       try {
         const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(b.bg || '');
@@ -1320,6 +1324,7 @@
         c.width = w; c.height = h;
         const g = c.getContext('2d', { willReadFrequently: true });
         g.drawImage(bitmap, x0, y0, w, h, 0, 0, w, h);
+        for (const p of done) g.drawImage(p.c, p.x0 - x0, p.y0 - y0);
         const img = g.getImageData(0, 0, w, h), d = img.data;
         const N = w * h;
         const diff = new Uint16Array(N);
@@ -1438,8 +1443,18 @@
           d[k] = R; d[k + 1] = G; d[k + 2] = B; d[k + 3] = 255;
         }
         g.putImageData(img, 0, 0);
-        const patch = { url: c.toDataURL('image/png'), x: x0 / W, y: y0 / H, w: w / W, h: h / H };
-        Object.defineProperty(b, 'patch', { value: patch, enumerable: false, configurable: true, writable: true });
+        done.push({ b, c, g, x0, y0, w, h });
+      } catch (_) { /* keep the simple box */ }
+    }
+    for (const [n, p] of done.entries()) {
+      try {
+        for (const q of done.slice(n + 1)) {
+          if (q.x0 < p.x0 + p.w && p.x0 < q.x0 + q.w && q.y0 < p.y0 + p.h && p.y0 < q.y0 + q.h) {
+            p.g.drawImage(q.c, q.x0 - p.x0, q.y0 - p.y0);
+          }
+        }
+        const patch = { url: p.c.toDataURL('image/png'), x: p.x0 / W, y: p.y0 / H, w: p.w / W, h: p.h / H };
+        Object.defineProperty(p.b, 'patch', { value: patch, enumerable: false, configurable: true, writable: true });
       } catch (_) { /* keep the simple box */ }
     }
   }
