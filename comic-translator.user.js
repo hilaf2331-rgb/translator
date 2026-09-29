@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.25.3
+// @version      1.26.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -746,6 +746,11 @@
       `a scream of pain ("ARGH!", "AAAH!") is "אאאח!", of anger or frustration "אררר!" / "אווף!", of fright "אאא!" ` +
       `(not "ארגח"). If a Hebrew word just spells the English sound in Hebrew letters, it's wrong: use the sound an ` +
       `Israeli would actually make. ` +
+      `Read the bubbles as one conversation, in reading order. A reply often leaves out words said in the ` +
+      `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
+      `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
+      `me?!": "אתה היית נשאר בשקט אם היית במקומי?!"). ` +
+      (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
       `Flirting and romance should sound natural, not cheesy. Narration boxes can be a little more written ` +
       `but still simple. Keep lines short so they fit the bubble. No nikud. ` +
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
@@ -1136,10 +1141,21 @@
         throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
-    const out = await translateBitmap(bitmap, apiKey);
+    const out = await translateBitmap(bitmap, apiKey, contextBefore(el));
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
     return out;
+  }
+
+  // The last few lines of the picture right above (when it's already translated), so a reply at
+  // the top of this picture is translated knowing what it answers.
+  function contextBefore(el) {
+    try {
+      const above = neighbor(el, 'above');
+      const hit = above && cache[keyOf(above)];
+      if (!hit || !hit.b.length) return '';
+      return hit.b.slice().sort((a, b) => a.y - b.y).slice(-4).map((b) => `"${b.t}"`).join(' / ');
+    } catch (_) { return ''; }
   }
 
   // Bubbles touching the top/bottom edge of a picture. On sites that cut a chapter into many
@@ -1153,8 +1169,9 @@
   }
 
   // Translates a whole picture (cut into pieces if it's tall). Bubbles come back as fractions.
-  async function translateBitmap(bitmap, apiKey) {
+  async function translateBitmap(bitmap, apiKey, context = '') {
     const { pieces, sentW, sentH, pieceH, crop } = slice(bitmap);
+    if (context) pieces[0].context = context;
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
     // A bubble that touches a cut between pieces was only partly visible there (and its
