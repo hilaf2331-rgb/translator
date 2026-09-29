@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.1
+// @version      1.26.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -939,6 +939,7 @@
     // catching one's breath (after a kiss, coming out of water), relief
     [/^(P+W+A+H+|P+U+A+H+|B+W+A+H+|P+H+U+A+H+|P+U+H+A+|P+A+H+|B+U+H+A+|H+U+H+A+|H+A+A+H+)$/, 'האח'],
     [/^(P+H+E+W+|P+H+E+U+|F+E+W+)$/, 'פיו'],
+    [/^(S+H+E+E+S+H+|J+E+E+Z+|G+E+E+Z+|S+H+E+S+H+)$/, 'אוף'], // exasperation
     // moans and grunts (pain or pleasure)
     [/^(U+N+G+H*|N+G+H+|H+N+G+H*|H+N+N+G+H*|N+N+G+H*|A+N+G+H+|E+N+G+H+|H+A+A+N+G*|H+A+N+G+H+|A+H+N+G*)$/, 'אהה'],
     [/^(M+M+P+H+|M+P+H+|H+M+P+H+|N+N+H+|N+N+|M+N+H+|H+N+N+)$/, 'ממ'],
@@ -950,6 +951,7 @@
     // Moans spelled out letter by letter in translations saved before the sounds list knew them.
     if (/^\s*(אנג[הח]?|הנג[הח]?|אננג[הח]?)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אהה');
     if (/^\s*(פוו?אח|פווה|בוואח|פואה)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'האח');
+    if (/^\s*([.…]*)\s*(פפוף|שיש|שייש|שיישש)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אוף');
     return t
       .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
@@ -1349,7 +1351,7 @@
     const done = [];
     bubbles: for (const b of bubbles) {
       try {
-        let side = 0.15; // extra room at the sides, as a fraction of the box width
+        const side = 0.15; // extra room at the sides, as a fraction of the box width
         for (;;) {
           const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(b.bg || '');
           if (!m) continue bubbles;
@@ -1412,21 +1414,6 @@
             }
             if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
           }
-          // Lines running out of the area at its sides (the box was too narrow): many separate bits of
-          // ink cut by the left or right edge, level with the text. Try again with a wider area.
-          if (side < 1) {
-            let runs = 0;
-            for (const x of [x0 > 0 ? 0 : -1, x1 < W ? w - 1 : -1]) {
-              if (x < 0) continue;
-              let on = false;
-              for (let y = by0; y < by1; y++) {
-                const hit = keep[y * w + x] === 1;
-                if (hit && !on) runs++;
-                on = hit;
-              }
-            }
-            if (runs >= 4) { side = side < 0.5 ? 0.6 : 1.2; continue; }
-          }
           // If much of the ink in the text box belongs to the drawing (letters touching a bubble or
           // artwork, e.g. outlined sound-effect text), the letters can't be told apart: use the
           // plain box instead, which covers them all.
@@ -1450,6 +1437,29 @@
             }
           }
           const touching = keptIn > inkIn * 0.12;
+          // The letters' color (what fills the middle of the text box) and "letter-colored": close to
+          // it or to a blend of it with the bubble's (the soft letter edges). Only letter-colored
+          // things are erased, so a face or other art right next to the text keeps its lines.
+          const letterColorTest = (useInk, tolerance) => {
+            const ch = [[], [], []];
+            const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
+            const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
+            for (let y = qy0; y < qy1; y++) {
+              for (let x = qx0; x < qx1; x++) {
+                const i = y * w + x;
+                if (useInk(i)) { ch[0].push(d[i * 4]); ch[1].push(d[i * 4 + 1]); ch[2].push(d[i * 4 + 2]); }
+              }
+            }
+            if (!ch[0].length) return () => true;
+            const lc = ch.map((a) => a.sort((p, q) => p - q)[a.length >> 1]);
+            const vx = lc[0] - R, vy = lc[1] - G, vz = lc[2] - B, vv = vx * vx + vy * vy + vz * vz || 1;
+            return (i) => {
+              const k = i * 4, px = d[k] - R, py = d[k + 1] - G, pz = d[k + 2] - B;
+              const t = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / vv));
+              return Math.abs(px - t * vx) + Math.abs(py - t * vy) + Math.abs(pz - t * vz) < tolerance;
+            };
+          };
+          let letterTest = () => true;
             if (touching) {
             // The letters touch the outline or artwork, so they can't be told apart by what they touch.
             // Then erase every stroke inside the text box (a little wider), and keep everything
@@ -1482,26 +1492,10 @@
             const core = new Uint8Array(N);
             for (let i = 0; i < N; i++) core[i] = ink[i] && !gapsNear[i] ? 1 : 0;
             const big = grow(grow(core, true), false);
-            // The letters' own color: what fills the middle of the text box. Only strokes of about
-            // that color are erased, so a black outline or the art around keeps its place.
-            const ch = [[], [], []];
+            const lettery = letterColorTest((i) => ink[i] && !big[i], 80);
+            letterTest = lettery;
             const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
             const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
-            for (let y = qy0; y < qy1; y++) {
-              for (let x = qx0; x < qx1; x++) {
-                const i = y * w + x;
-                if (ink[i] && !big[i]) { ch[0].push(d[i * 4]); ch[1].push(d[i * 4 + 1]); ch[2].push(d[i * 4 + 2]); }
-              }
-            }
-            const lc = ch.map((a) => (a.length ? a.sort((p, q) => p - q)[a.length >> 1] : 0));
-            // Letter-colored: close to the letters' color or to a blend of it with the bubble's
-            // (the soft letter edges).
-            const vx = lc[0] - R, vy = lc[1] - G, vz = lc[2] - B, vv = vx * vx + vy * vy + vz * vz || 1;
-            const lettery = (i) => {
-              const k = i * 4, px = d[k] - R, py = d[k + 1] - G, pz = d[k + 2] - B;
-              const t = Math.max(0, Math.min(1, (px * vx + py * vy + pz * vz) / vv));
-              return Math.abs(px - t * vx) + Math.abs(py - t * vy) + Math.abs(pz - t * vz) < 80;
-            };
             // Inside the bubble: reachable from the middle of the text box through the bubble's color
             // and letter-colored pixels, never across the outline or other artwork.
             const inside = new Uint8Array(N), st = [];
@@ -1526,14 +1520,37 @@
           // it all (and 3px around it), without touching what we keep.
           const letter = new Uint8Array(N);
           let front = [];
-          for (let i = 0; i < N; i++) if (ink[i] && !keep[i]) { letter[i] = 1; front.push(i); }
+          // Only shapes that reach into the text box (a little wider; a whole line above and below)
+          // are letters: a nose or a mouth drawn right next to the text isn't.
+          const lh = bh / Math.max(1, b.n || 1);
+          const ex0 = bx0 - Math.round((bx1 - bx0) * 0.05) - 5, ex1 = bx1 + Math.round((bx1 - bx0) * 0.05) + 5;
+          const ey0 = by0 - Math.round(lh * 1.4), ey1 = by1 + Math.round(lh * 1.4);
+          const nearText = (i) => { const x = i % w, y = (i - x) / w; return x >= ex0 && x < ex1 && y >= ey0 && y < ey1; };
+          const cand = new Uint8Array(N);
+          for (let i = 0; i < N; i++) if (ink[i] && !keep[i] && letterTest(i)) cand[i] = 1;
+          const seenC = new Uint8Array(N);
+          for (let s0 = 0; s0 < N; s0++) {
+            if (!cand[s0] || seenC[s0]) continue;
+            const comp = [s0], st2 = [s0];
+            seenC[s0] = 1;
+            let hitsText = false;
+            while (st2.length) {
+              const i = st2.pop(), x = i % w;
+              if (!hitsText && nearText(i)) hitsText = true;
+              for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+                if (j < 0 || j >= N || !cand[j] || seenC[j]) continue;
+                seenC[j] = 1; st2.push(j); comp.push(j);
+              }
+            }
+            if (hitsText) for (const i of comp) { letter[i] = 1; front.push(i); }
+          }
           const erased = front.length;
           for (let step = 0; step < 10 && front.length; step++) {
             const nextFront = [];
             for (const i of front) {
               const x = i % w;
               for (const j of [i - 1, i + 1, i - w, i + w]) {
-                if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || letter[j] || keep[j] || diff[j] <= 18) continue;
+                if (j < 0 || j >= N || Math.abs((j % w) - x) > 1 || letter[j] || keep[j] || diff[j] <= 18 || !letterTest(j) || !nearText(j)) continue;
                 letter[j] = 1; nextFront.push(j);
               }
             }
