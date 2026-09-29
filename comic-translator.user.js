@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.2
+// @version      1.26.3
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -740,7 +740,8 @@
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
       `יצא משליטה, not מחוק, which means wasted); when unsure, pick the plain accurate word. Meaning comes before style. ` +
       `Brand names, model names and technical terms an Israeli reader wouldn't know become the plain Hebrew word for ` +
-      `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה), unless the name itself matters to the story. ` +
+      `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה); when the name itself matters (a character ` +
+      `recognizes it), keep it but say what it is too ("A Beretta?" is "אקדח ברטה?", never just "ברטה?"). ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
       `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", `+
       `coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
