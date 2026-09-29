@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.18.0
+// @version      1.18.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -245,7 +245,7 @@
         '1'
       );
       if (choice === '1') askForKey();
-      else if (choice === '2') { cache = {}; saveCache(); alert('נוקה.'); }
+      else if (choice === '2') { cache = {}; saveCache(); exhausted = {}; store.set(KEY_EXHAUSTED, '{}'); alert('נוקה.'); }
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
@@ -374,6 +374,9 @@
       return false;
     }
     await store.set(KEY_API, key.trim());
+    // A new key starts with a clean slate on Google's quotas.
+    try { exhausted = {}; } catch (_) { /* not set up yet */ }
+    store.set('quotaExhausted', '{}');
     return true;
   }
 
