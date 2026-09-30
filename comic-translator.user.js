@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.28.0
+// @version      1.29.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -47,7 +47,8 @@
                                     // so every bubble is whole in at least one piece
   const MAX_PARALLEL = 10;           // images translated at the same time
   const LOOK_AHEAD = '800%';        // start translating this far (in screens) before you get there
-  const CACHE_LIMIT = 400;          // translated images remembered across visits
+  const CACHE_LIMIT = 2000;         // translated images remembered across visits
+  const DAILY_PICS = 300;           // pictures a day before asking whether to go on (cost guard)
 
   const isTop = window === window.top;
   // Inside an embedded reader (iframe) the on/off switch follows the main site's address.
@@ -100,6 +101,8 @@
   let usage = JSON.parse(await store.get(KEY_USAGE, '{}'));
   function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0 }) {
     if (usage.month !== thisMonth()) usage = { month: thisMonth(), since: `${new Date().getDate()}/${new Date().getMonth() + 1}`, pics: 0, calls: 0, inTok: 0, outTok: 0 };
+    const today = new Date().toDateString();
+    if (usage.day !== today) { usage.day = today; usage.dayPics = 0; usage.dayAllowed = DAILY_PICS; }
     usage.pics += pics; usage.calls += calls; usage.inTok += inTok || 0; usage.outTok += outTok || 0;
     store.set(KEY_USAGE, JSON.stringify(usage));
   }
@@ -356,10 +359,14 @@
         const u = usage.month === thisMonth() ? usage : { pics: 0, calls: 0, inTok: 0, outTok: 0, since: '' };
         const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' מיליון' : n >= 1e4 ? Math.round(n / 1000) + ' אלף' : (n / 1000).toFixed(1) + ' אלף');
         alert(`שימוש החודש${u.since ? ` (מאז ${u.since})` : ''}:\n` +
-          `• ${u.pics} תמונות תורגמו\n• ${u.calls} בקשות ל-Google\n` +
+          `• ${u.pics} תמונות תורגמו (היום: ${usage.day === new Date().toDateString() ? usage.dayPics : 0})\n• ${u.calls} בקשות ל-Google\n` +
           `• ${k(u.inTok)} טוקנים נשלחו, ${k(u.outTok)} חזרו\n\n` +
           `המחיר המדויק מופיע ב-Google (AI Studio ← Spend). כדי לדעת מחיר לפרק: הסכום שם חלקי מספר הפרקים שקראת.\n` +
-          `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)`);
+          `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)\n\nאחרי ${DAILY_PICS} תמונות ביום המתרגם שואל אם להמשיך.`);
+        if (usage.dayStop === usage.day && confirm('המתרגם עצר היום בגלל המגבלה היומית. להמשיך לתרגם?')) {
+          usage.dayStop = ''; usage.dayAllowed = (usage.dayPics || 0) + DAILY_PICS; store.set(KEY_USAGE, JSON.stringify(usage));
+          nearView.forEach((el) => { state.delete(el); check(el); });
+        }
       }
       else if (choice === '12') {
         const found = await checkForUpdate(true);
@@ -1234,10 +1241,44 @@
         throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
+    // Some sites give the same picture a new address on every visit, which would translate (and
+    // bill) it again. Recognise it by what it looks like instead.
+    const fp = fingerprint(bitmap);
+    const seen = fp && cache[fp];
+    if (seen) {
+      seen.t = Date.now();
+      const again = seen.b.map((b) => ({ ...b }));
+      makePatches(bitmap, again);
+      Object.defineProperty(again, 'reused', { value: true });
+      return again;
+    }
     const out = await translateBitmap(bitmap, apiKey, contextBefore(el), await picturesAround(el));
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
+    if (fp && !out.blocked) cache[fp] = { t: Date.now(), b: out };
     return out;
+  }
+
+  // A short code for how a picture looks (its size plus a tiny grey thumbnail), the same for the
+  // same picture however it's served.
+  function fingerprint(bitmap) {
+    try {
+      // Fine enough that pictures differing only in their words get different codes; the same
+      // picture served again decodes to exactly the same pixels.
+      const w = Math.min(160, bitmap.width), h = Math.max(1, Math.min(2400, Math.round(bitmap.height * (w / bitmap.width))));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(bitmap, 0, 0, w, h);
+      const d = g.getImageData(0, 0, w, h).data;
+      let h1 = 5381, h2 = 52711;
+      for (let i = 0; i < d.length; i += 4) {
+        const v = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
+        h1 = (Math.imul(h1, 33) + v) | 0;
+        h2 = (Math.imul(h2 ^ v, 16777619)) | 0;
+      }
+      return `fp:${bitmap.width}x${bitmap.height}:${(h1 >>> 0).toString(36)}${(h2 >>> 0).toString(36)}`;
+    } catch (_) { return ''; }
   }
 
   // Sites often cut a chapter into many stacked pictures, so the person a bubble talks to can be
@@ -2092,11 +2133,24 @@
       for (let i = 1; i < queue.length; i++) if (dist(queue[i]) < dist(queue[best])) best = i;
       const { el, key } = queue.splice(best, 1)[0];
       if (state.get(el)?.key !== key) continue; // page changed while waiting
+      // Cost guard: after a day's worth of pictures, ask before going on.
+      countUsage({});
+      if (!cache[key] && usage.dayPics >= usage.dayAllowed) {
+        if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); continue; }
+        if (confirm(`תורגמו היום ${usage.dayPics} תמונות. להמשיך לתרגם (עוד ${DAILY_PICS})?\nזה עוזר לשמור על ההוצאה. אפשר לראות את השימוש ב-⚙ ← 13.`)) {
+          usage.dayAllowed += DAILY_PICS;
+        } else {
+          usage.dayStop = usage.day;
+        }
+        store.set(KEY_USAGE, JSON.stringify(usage));
+        if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); continue; }
+      }
+      usage.dayPics++; // counted when it starts, so pictures started together can't slip past the limit
       running++;
       setStatus(el, 'מתרגם…');
       translateElement(el)
         .then((bubbles) => {
-          countUsage({ pics: 1 });
+          if (bubbles.reused) usage.dayPics--; else countUsage({ pics: 1 });
           if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
             cache[key] = { t: Date.now(), b: bubbles };
             saveCache();
