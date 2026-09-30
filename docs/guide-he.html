@@ -179,7 +179,7 @@ tr { break-inside: avoid; }
 
 <!-- ============ שלב 2 ============ -->
 <h2>שלב 2: להגן על המפתח ועל הכסף (5 דקות, מאוד מומלץ)</h2>
-<p>שלושה דברים קטנים שמבטיחים שגם אם המפתח ידלוף, לא יקרה שום דבר רציני.</p>
+<p>שני דברים קטנים שמבטיחים שגם אם המפתח ידלוף, לא יקרה שום דבר רציני, ושלא תהיה הפתעה בחיוב.</p>
 
 <h3>א. להגביל את המפתח ל-Gemini בלבד</h3>
 <div class="step"><div class="num">1</div><div class="body">
@@ -190,22 +190,16 @@ tr { break-inside: avoid; }
 <div class="step"><div class="num">4</div><div class="body">בחלק <span class="btn">Application restrictions</span> <b>משאירים על None</b>. זה תקין, האפשרויות האחרות לא מתאימות לכלי הזה.</div></div>
 <div class="step"><div class="num">5</div><div class="body">גוללים למטה ולוחצים <span class="btn">Save</span>. לוקח עד 5 דקות עד שזה נכנס לתוקף.</div></div>
 
-<h3>ב. התראה על הוצאות</h3>
-<div class="step"><div class="num">1</div><div class="body">
-  פותחים: <div class="linkbox"><a href="https://console.cloud.google.com/billing">https://console.cloud.google.com/billing</a></div>
-  ובוחרים את חשבון התשלום שלך.
-</div></div>
-<div class="step"><div class="num">2</div><div class="body">בתפריט: <span class="btn">Budgets &amp; alerts</span> ← <span class="btn">Create budget</span>.</div></div>
-<div class="step"><div class="num">3</div><div class="body">כותבים סכום, למשל <b>30 ₪</b> לחודש, ומשאירים את ההתראות שמוצעות (50%, 90%, 100%). שומרים.</div></div>
-<div class="good">✅ עכשיו תקבלי מייל אם ההוצאה מתקרבת לסכום. שימי לב: <b>זו התראה, לא חסימה</b>. היא לא עוצרת את השימוש, רק מודיעה. בשביל חסימה יש את סעיף ג'.</div>
-
-<h3>ג. תקרה: Google עוצרים כשמגיעים לסכום</h3>
+<h3>ב. הכסף: הכול מנוהל ב-AI Studio</h3>
+<p>את התשלום, ההוצאות וההגבלות של Gemini מנהלים באתר <b>AI Studio</b> (לא ב-Google Cloud).</p>
 <div class="step"><div class="num">1</div><div class="body">
   פותחים: <div class="linkbox"><a href="https://aistudio.google.com">https://aistudio.google.com</a></div>
-  ובתפריט (☰) נכנסים לעמוד ההוצאות: <span class="btn">Spend</span>.
+  ובתפריט (☰) נכנסים ל-<span class="btn">Billing</span> / <span class="btn">Spend</span>.
 </div></div>
-<div class="step"><div class="num">2</div><div class="body">ליד <span class="btn">Monthly spend cap</span> לוחצים על העיפרון ✏️, כותבים סכום (למשל <b>30 ₪</b>) ושומרים.</div></div>
-<div class="good">✅ זהו. כשההוצאה בחודש מגיעה לסכום, התרגום פשוט מפסיק עד תחילת החודש הבא. אי אפשר לקבל חשבון מפתיע. (Google מסמנים את האפשרות הזו כ"ניסיונית", ויכולה להיות חריגה של כמה אגורות.)</div>
+<div class="step"><div class="num">2</div><div class="body"><b>לכבות טעינה אוטומטית:</b> Google גובים <b>מראש</b> קרדיט (למשל ₪50), וכשהוא נגמר הם גובים שוב לבד. מחפשים <span class="btn">Auto-reload</span> (טעינה אוטומטית) ו<b>מכבים</b>. ככה שום דבר לא נגבה בלי שתאשרי. הקרדיט שלא נוצל נשאר שלך לחודשים הבאים.</div></div>
+<div class="step"><div class="num">3</div><div class="body"><b>תקרה חודשית:</b> ליד <span class="btn">Monthly spend cap</span> לוחצים על העיפרון ✏️, כותבים סכום (למשל <b>₪50</b>) ושומרים. כשההוצאה בחודש מגיעה אליו, התרגום נעצר עד ה-1 בחודש.</div></div>
+<div class="good">✅ עם שני אלה אי אפשר לקבל הפתעות: לא נגבה כסף אוטומטית, ולא מוציאים יותר מהתקרה. (התקרה מסומנת "ניסיונית" ויכולה להיות חריגה קטנה.)</div>
+<div class="warn">⚠️ <b>קריאה הרבה עולה כסף אמיתי.</b> בבדיקות שלי פרק יצא בערך <b>₪0.5–1.5</b>, תלוי באורך ובאתר. בתפריט ⚙ ← <b>13</b> רואים כמה תמונות תורגמו החודש, ובעמוד Spend כמה זה עלה.</div>
 
 <!-- ============ שלב 3 ============ -->
 <h2>שלב 3: האפליקציה Userscripts (אייפון)</h2>
@@ -347,6 +341,7 @@ tr { break-inside: avoid; }
   <tr><td>10</td><td>מסנן תוכן מיני: רגיל או מקל</td><td>רגיל = ברירת המחדל של Google</td></tr>
   <tr><td>11</td><td><b>שמות הדמויות</b></td><td>המתרגם זוכר איך כתב כל שם, כדי שיישאר אותו כתיב. כאן אפשר לתקן, למשל <span class="ltr">Tae = טאי</span></td></tr>
   <tr><td>12</td><td><b>בדיקת עדכונים עכשיו</b></td><td>אם שמעת שיצאה גרסה חדשה ועוד לא הופיע כפתור ורוד</td></tr>
+  <tr><td>13</td><td><b>שימוש החודש</b></td><td>כמה תמונות תורגמו החודש והיום. גם לשחרר את המגבלה היומית</td></tr>
 </table>
 
 <!-- ============ עדכונים ============ -->
@@ -387,8 +382,11 @@ tr { break-inside: avoid; }
 <h2>שלב 8: כמה זה עולה</h2>
 <ul>
   <li>💰 <b>משלמים ל-Google לפי שימוש:</b> לפי כמה תמונות מתורגמות. אין מנוי קבוע.</li>
-  <li>📊 <b>לראות כמה שילמת:</b> <a href="https://console.cloud.google.com/billing">console.cloud.google.com/billing</a> ← <span class="btn">Reports</span>. בצד ימין מסננים <span class="btn">Services</span> ← <span class="btn">Gemini API</span>.</li>
-  <li>⏳ <b>החיוב מתעדכן באיחור</b> של כמה שעות עד יום. מה שקראת היום יופיע מחר.</li>
+  <li>📊 <b>לראות כמה הוצאת:</b> <a href="https://aistudio.google.com">aistudio.google.com</a> ← <span class="btn">Spend</span>. המספר העליון (ליד התקרה) מתעדכן תוך כ-10 דקות.</li>
+  <li>🔢 <b>כמה תרגמת:</b> ⚙ ← <b>13</b> מראה כמה תמונות ובקשות היו החודש. ההוצאה חלקי מספר הפרקים = מחיר לפרק.</li>
+  <li>💳 <b>איך גובים:</b> מראש, בקרדיט. כבי את הטעינה האוטומטית (שלב 2) כדי ששום דבר לא ייגבה לבד.</li>
+  <li>🛑 <b>מגבלה יומית:</b> אחרי 300 תמונות ביום המתרגם שואל אם להמשיך.</li>
+  <li>🚫 <b>לא לנקות תרגומים (⚙ ← 2) בלי צורך:</b> זה מתרגם הכול מחדש ומשלמים שוב.</li>
   <li>🟢 <b>לחסוך:</b> ⚙ ← <b>7</b> (מצב חסכוני), בערך חצי מחיר. אם האיכות לא מספיקה, מכבים באותה דרך.</li>
   <li>♻️ <b>תמונות שכבר תורגמו נשמרות</b>, כך שחזרה לפרק לא עולה שוב.</li>
   <li>☁️ <b>שרת העזר</b> (אם צריך) חינמי.</li>
