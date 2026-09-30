@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.10
+// @version      1.26.11
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1228,6 +1228,16 @@
     if (context) pieces[0].context = context;
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
+    // A piece the safety filter refused: often only one part of the drawing sets it off. Try its
+    // top and bottom halves on their own, so the bubbles in the other part still get translated.
+    for (const p of pieces.slice()) {
+      if (!p.blocked || p.h < 400) continue;
+      const half = Math.round(p.h * 0.6);
+      const parts = [crop(p.y, half), crop(p.y + p.h - half, half)];
+      const res = await Promise.all(parts.map((q) => translatePiece(q, apiKey).catch(() => [])));
+      if (parts.some((q) => !q.blocked)) delete p.blocked;
+      parts.forEach((q, i) => { pieces.push(q); results.push(res[i]); });
+    }
     // A bubble that touches a cut between pieces was only partly visible there (and its
     // translation may be partial), so prefer the neighbouring piece where it is whole.
     const whole = [], cut = [];
