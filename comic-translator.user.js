@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.11
+// @version      1.26.12
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -765,7 +765,8 @@
       `written in the original; English words are translated into plain ${TARGET_LANG} as usual (never turn "senior" ` +
       `into סונבה or "brother" into היונג: "senior" is "בכיר" / "מהשנה מעליי" / "הוותיק", "brother" is "אח", "sir" is "אדוני"). ` +
       `"Just like that" is "בדיוק ככה" (that's the way) or "פשוט ככה" / "ככה פתאום" (it suddenly happened), ` +
-      `never "ככה סתם", which means "for no reason". ` +
+      `never "ככה סתם", which means "for no reason". "In any way" is "בשום צורה" only in a negative sentence ` +
+      `("not in any way"); otherwise it's "בכל מקרה" / "בכל דרך". ` +
       `Read the bubbles as one conversation, in reading order. A reply often leaves out words said in the ` +
       `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
@@ -996,6 +997,8 @@
     [/^JUST LIKE THAT$/, 'בדיוק ככה'], // not "ככה סתם", which means "for no reason"
     [/^(RIGHT|EXACTLY) LIKE THAT$/, 'בדיוק ככה'],
     [/^LIKE THAT$/, 'ככה'],
+    // a bubble of its own that carries on the previous sentence: never the negative "בשום צורה"
+    [/^(IN ANY WAY|ANYWAY|ANYWAYS|IN ANY CASE|EITHER WAY)$/, 'בכל מקרה'],
   ];
   function fixPhrases(original, translation) {
     const words = String(original || '').toUpperCase().replace(/[^A-Z' ]+/g, ' ').replace(/\s+/g, ' ').trim();
