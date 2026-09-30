@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.14
+// @version      1.26.15
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -779,8 +779,10 @@
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
       `the art (look at the characters in the panel and the bubble tails) and use the matching forms. ` +
       `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
-      `Use the characters' names and how they are drawn; only when there is no clue at all, use masculine forms. ` +
-      (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. ` : '') +
+      `Use the characters' names and how they are drawn; the person spoken to is often drawn in the panel the bubble's ` +
+      `tail points to, above or below the bubble, so look there too. Only when there is no clue at all, use masculine forms. ` +
+      (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. These are about the ` +
+        `characters they name; other characters (side characters, strangers) can be of any gender, so judge them from the art. ` : '') +
       // Names: one Hebrew spelling per character across the whole story.
       (Object.keys(glossary).length
         ? `Names already used in this story; always spell them exactly like this: ` +
