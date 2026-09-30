@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.7
+// @version      1.26.8
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -742,6 +742,8 @@
       `English idioms into Hebrew ones (e.g. "make a move" is not "עושה מהלך"). Avoid formal or literary words ` +
       `(אינני, הנני, כיצד, מדוע, אולם, על מנת); use the spoken ones (אני לא, איך, למה, אבל, כדי). ` +
       `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
+      `Use only real, everyday ${TARGET_LANG} words: never invent a word or a verb form. If you're not sure a form ` +
+      `exists, say it more simply (e.g. "bathe in the sun" is "להשתזף" or "לשבת קצת בשמש"). ` +
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
       `יצא משליטה, not מחוק, which means wasted); when unsure, pick the plain accurate word. Meaning comes before style. ` +
       `Brand names, model names and technical terms an Israeli reader wouldn't know become the plain Hebrew word for ` +
