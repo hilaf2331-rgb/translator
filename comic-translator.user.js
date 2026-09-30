@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.15
+// @version      1.27.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -774,6 +774,12 @@
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
       `me?!": "אתה היית נשאר בשקט אם היית במקומי?!"). ` +
       (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
+      (piece.ctx?.length
+        ? `After the main picture come ${piece.ctx.length} small extra picture(s): ` +
+          piece.ctx.map((c) => (c.where === 'above' ? 'the part of the page right above it' : 'the part of the page right below it')).join(', then ') +
+          `. They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
+          `never return bubbles from them, and all coordinates are for the main (first) picture only. `
+        : '') +
       `Flirting and romance should sound natural, not cheesy. Narration boxes can be a little more written ` +
       `but still simple. Keep lines short so they fit the bubble. No nikud. ` +
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
@@ -903,6 +909,7 @@
         role: 'user',
         parts: [
           imagePart,
+          ...(piece.ctx || []).map((c) => ({ inlineData: { mimeType: 'image/jpeg', data: c.data } })),
           { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
         ],
       }],
@@ -1168,6 +1175,7 @@
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: piece.data } },
+            ...(piece.ctx || []).map((c) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: c.data } })),
             { type: 'text', text: buildPrompt(piece, 'the box in pixel coordinates of this image (x, y = top-left corner, w, h = size)') },
           ],
         }],
@@ -1204,9 +1212,30 @@
         throw new Error(`${err.message}${hint}`.slice(0, 400));
       }
     }
-    const out = await translateBitmap(bitmap, apiKey, contextBefore(el));
+    const out = await translateBitmap(bitmap, apiKey, contextBefore(el), await picturesAround(el));
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
+    return out;
+  }
+
+  // Sites often cut a chapter into many stacked pictures, so the person a bubble talks to can be
+  // in the next picture. Send a small strip of the pictures right above and below along, only
+  // so the model sees who is who (for he/she in Hebrew).
+  async function picturesAround(el) {
+    const strip = async (other, where) => {
+      if (!other) return null;
+      const bmp = await Promise.race([loadBitmap(other), new Promise((_, no) => setTimeout(no, 4000))]);
+      const W = bmp.width, H = bmp.height, h = Math.min(H, Math.round(W * 0.9));
+      const sw = 384, sh = Math.round((h / W) * sw);
+      const c = document.createElement('canvas');
+      c.width = sw; c.height = sh;
+      c.getContext('2d').drawImage(bmp, 0, where === 'above' ? H - h : 0, W, h, 0, 0, sw, sh);
+      return c.toDataURL('image/jpeg', 0.7).split(',')[1];
+    };
+    const out = {};
+    for (const where of ['above', 'below']) {
+      try { out[where] = await strip(neighbor(el, where), where); } catch (_) { /* no context then */ }
+    }
     return out;
   }
 
@@ -1232,9 +1261,11 @@
   }
 
   // Translates a whole picture (cut into pieces if it's tall). Bubbles come back as fractions.
-  async function translateBitmap(bitmap, apiKey, context = '') {
+  async function translateBitmap(bitmap, apiKey, context = '', around = {}) {
     const { pieces, sentW, sentH, pieceH, crop } = slice(bitmap);
     if (context) pieces[0].context = context;
+    if (around.above) (pieces[0].ctx ||= []).push({ where: 'above', data: around.above });
+    if (around.below) (pieces[pieces.length - 1].ctx ||= []).push({ where: 'below', data: around.below });
     const out = [];
     const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
     // A piece the safety filter refused: often only one part of the drawing sets it off. Try its
