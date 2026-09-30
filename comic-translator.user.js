@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.12
+// @version      1.26.13
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -742,6 +742,8 @@
       `English idioms into Hebrew ones (e.g. "make a move" is not "עושה מהלך"). Avoid formal or literary words ` +
       `(אינני, הנני, כיצד, מדוע, אולם, על מנת); use the spoken ones (אני לא, איך, למה, אבל, כדי). ` +
       `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
+      `Don't write English words in Hebrew letters when Israelis have an everyday Hebrew word for it ` +
+      `("workaholic" is "מכור לעבודה", not "וורקהוליק"; "crush" can stay "קראש" because people say it). ` +
       `Use only real, everyday ${TARGET_LANG} words: never invent a word or a verb form. If you're not sure a form ` +
       `exists, say it more simply (e.g. "bathe in the sun" is "להשתזף" or "לשבת קצת בשמש"). ` +
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
@@ -974,6 +976,7 @@
     if (/^\s*(אנג[הח]?|הנג[הח]?|אננג[הח]?)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אהה');
     if (/^\s*(פוו?אח|פווה|בוואח|פואה)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'האח');
     if (/^\s*([.…]*)\s*(פפוף|שיש|שייש|שיישש)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אוף');
+    t = t.replace(/ו?ורק[הא]?וליק(ית)?/g, (m, f) => (f ? 'מכורה לעבודה' : 'מכור לעבודה'));
     return t
       .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
