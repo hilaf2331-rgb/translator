@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.6
+// @version      1.26.7
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -760,6 +760,8 @@
       `senpai = סנפאי, -kun = -קון, -chan = -צ'אן, -san = -סאן. This is only for the Korean/Japanese word itself ` +
       `written in the original; English words are translated into plain ${TARGET_LANG} as usual (never turn "senior" ` +
       `into סונבה or "brother" into היונג: "senior" is "בכיר" / "מהשנה מעליי" / "הוותיק", "brother" is "אח", "sir" is "אדוני"). ` +
+      `"Just like that" is "בדיוק ככה" (that's the way) or "פשוט ככה" / "ככה פתאום" (it suddenly happened), ` +
+      `never "ככה סתם", which means "for no reason". ` +
       `Read the bubbles as one conversation, in reading order. A reply often leaves out words said in the ` +
       `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
@@ -982,8 +984,23 @@
     return translation;
   }
 
+  // Short phrases the model tends to get wrong when they are the whole bubble.
+  const PHRASES = [
+    [/^JUST LIKE THAT$/, 'בדיוק ככה'], // not "ככה סתם", which means "for no reason"
+    [/^(RIGHT|EXACTLY) LIKE THAT$/, 'בדיוק ככה'],
+    [/^LIKE THAT$/, 'ככה'],
+  ];
+  function fixPhrases(original, translation) {
+    const words = String(original || '').toUpperCase().replace(/[^A-Z' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const hit = words && PHRASES.find(([re]) => re.test(words));
+    if (!hit) return translation;
+    const lead = /^\s*([.…]+)/.exec(String(original))?.[1] ? '...' : '';
+    const tail = /([.…!?]+)\s*$/.exec(String(original))?.[1] || '';
+    return lead + hit[1] + tail.replace(/\.{4,}|…/g, '...');
+  }
+
   function fixSounds(original, translation) {
-    translation = fixHonorifics(original, cleanHebrew(translation));
+    translation = fixPhrases(original, fixHonorifics(original, cleanHebrew(translation)));
     const text = String(original || '').trim();
     if (!text || text.length > 60) return translation;
     // Split into words and the punctuation between them ("KEGH, KEGH." -> KEGH / KEGH).
