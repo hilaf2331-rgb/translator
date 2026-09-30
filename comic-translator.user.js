@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.29.0
+// @version      1.30.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -49,6 +49,7 @@
   const LOOK_AHEAD = '800%';        // start translating this far (in screens) before you get there
   const CACHE_LIMIT = 2000;         // translated images remembered across visits
   const DAILY_PICS = 300;           // pictures a day before asking whether to go on (cost guard)
+  const IDLE_MS = 3 * 60 * 1000;    // stop translating after 3 minutes without scrolling or touching
 
   const isTop = window === window.top;
   // Inside an embedded reader (iframe) the on/off switch follows the main site's address.
@@ -2117,7 +2118,33 @@
     pump();
   }
 
+  // Only translate while you're actually reading: not in a tab in the background, and not when
+  // nothing has been scrolled or touched for a while (a page left open must not keep spending).
+  let lastActive = Date.now();
+  for (const ev of ['scroll', 'touchstart', 'wheel', 'keydown', 'pointerdown']) {
+    addEventListener(ev, () => {
+      const wasIdle = Date.now() - lastActive > IDLE_MS;
+      lastActive = Date.now();
+      if (wasIdle) pump();
+    }, { passive: true, capture: true });
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastActive = Date.now(); pump(); } });
+  const reading = () => !document.hidden && Date.now() - lastActive < IDLE_MS;
+
+  // A picture that keeps changing (a slideshow, an animated ad, a redrawn canvas) isn't a comic
+  // page: after a few changes in a short time, stop translating it.
+  const churn = new WeakMap(); // element -> times its picture changed recently
+  function churning(el) {
+    const now = Date.now();
+    if (now - lastActive < 3000) return false; // you just flipped the page: that's reading, not a slideshow
+    const list = (churn.get(el) || []).filter((t) => now - t < 120000);
+    list.push(now);
+    churn.set(el, list);
+    return list.length > 4;
+  }
+
   async function pump() {
+    if (!reading()) return;
     // On a site with no names learned yet, let the first picture finish alone, so the names it
     // learns are used by all the others (the same spelling for a character from the start).
     const limit = slowDown ? 2 : (Object.keys(glossary).length || firstDone ? MAX_PARALLEL : 1);
@@ -2133,6 +2160,7 @@
       for (let i = 1; i < queue.length; i++) if (dist(queue[i]) < dist(queue[best])) best = i;
       const { el, key } = queue.splice(best, 1)[0];
       if (state.get(el)?.key !== key) continue; // page changed while waiting
+      if (!cache[key] && churning(el)) { setStatus(el, 'לא מתרגם: התמונה כאן מתחלפת כל הזמן'); continue; }
       // Cost guard: after a day's worth of pictures, ask before going on.
       countUsage({});
       if (!cache[key] && usage.dayPics >= usage.dayAllowed) {
