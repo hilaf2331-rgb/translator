@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.8
+// @version      1.26.9
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -750,7 +750,8 @@
       `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה); when the name itself matters (a character ` +
       `recognizes it), keep it but say what it is too ("A Beretta?" is "אקדח ברטה?", never just "ברטה?"). ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
-      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", `+
+      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", a single long "HAA..." / "HAH..." is a breath out ` +
+      `("האא..."), not a laugh: only repeated "HAHA" is a laugh ("חחח"), `+
       `coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
       `"*משתעל*", not "קחח"; a groan of pain is "אאח" / "אוי"; a sigh is "אוף" / "הממ"; surprise is "הא?!"; ` +
       `a scream of pain ("ARGH!", "AAAH!") is "אאאח!", of anger or frustration "אררר!" / "אווף!", of fright "אאא!" ` +
@@ -948,7 +949,9 @@
     [/^(O+W+|O+U+C+H+|O+U+)$/, 'איי'],
     [/^(H+U+H+)$/, 'הא'],
     [/^(H+M+|H+M+M+|U+M+|U+M+M+|E+R+M+|M+M+)$/, 'הממ'],
-    [/^((H+A+)+H*|(H+E+)+H*|(K+E+)+K*|(K+U+)+K*)$/, 'חחח'],
+    // a laugh repeats: HAHA, HEHE, KEKE (one long "HAA..." is a breath out, below)
+    [/^((H+A+){2,}H*|(H+E+){2,}H*|(K+E+){2,}K*|(K+U+){2,}K*)$/, 'חחח'],
+    [/^(H+A+H*|H+U+A+H*|H+A+H+A+)$/, 'האא'], // letting out a breath, tired or relieved
     [/^(S+I+G+H+)$/, '*אנחה*'],
     [/^(W+O+W+|W+O+A+H+|W+H+O+A+)$/, 'וואו'],
     [/^(G+A+S+P+)$/, '*נושם בבהלה*'],
@@ -1003,7 +1006,8 @@
 
   function fixSounds(original, translation) {
     translation = fixPhrases(original, fixHonorifics(original, cleanHebrew(translation)));
-    const text = String(original || '').trim();
+    // "HA HA HA" is one laugh, not three breaths.
+    const text = String(original || '').trim().replace(/\b(H+A+|H+E+)(?:[\s,!.]+(?:H+A+|H+E+))+\b/gi, (m) => m.replace(/[\s,!.]+/g, ''));
     if (!text || text.length > 60) return translation;
     // Split into words and the punctuation between them ("KEGH, KEGH." -> KEGH / KEGH).
     const parts = text.toUpperCase().split(/([^A-Z]+)/);
