@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.9
+// @version      1.26.10
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -750,7 +750,8 @@
       `what the thing is (a "Rewaco" is a טרייק, a "Panzerfaust" is a בזוקה); when the name itself matters (a character ` +
       `recognizes it), keep it but say what it is too ("A Beretta?" is "אקדח ברטה?", never just "ברטה?"). ` +
       `Sounds and interjections (coughing, groans, gasps, sighs, laughs) become the Hebrew sounds Israeli readers ` +
-      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", a single long "HAA..." / "HAH..." is a breath out ` +
+      `know, never letter-by-letter transliterations: moans and grunts ("UNGH", "NGH", "HNNG", "MMPH") are "אהה..." or "ממ...", catching breath ("PWAH", "PUHA") is "האח!", relief ("PHEW") is "פיו", "UGH" depends on the scene: pain or effort (hit, grabbed, lifting) is "אחח!" / "אהה!", annoyance is "אוף", ` +
+      `disgust is "איכס" (look at the art to choose), a single long "HAA..." / "HAH..." is a breath out ` +
       `("האא..."), not a laugh: only repeated "HAHA" is a laugh ("חחח"), `+
       `coughing/choking ("KEGH", "COUGH") is "אחח... אחח" or ` +
       `"*משתעל*", not "קחח"; a groan of pain is "אאח" / "אוי"; a sigh is "אוף" / "הממ"; surprise is "הא?!"; ` +
@@ -944,7 +945,8 @@
   const SOUNDS = [
     [/^(A+R+G+H+|A+R+G+|A+G+H+|G+A+H+|A{2,}H*|U+A+G+H+|K+H+|A+C+K+)$/, 'אאאח'], // screams
     [/^(A|O|E)H+$/, 'אה'], // "Ah." / "Oh!" / "Eh?" 
-    [/^(U+G+H+|U+R+G+H+|B+L+E+H+|B+L+A+H+)$/, 'אוף'],
+    // (no fixed word for UGH: pain, annoyance and disgust sound different in Hebrew; the model picks from the art)
+    [/^(B+L+E+H+|B+L+A+H+)$/, 'איכס'],
     [/^(C+O+U+G+H+|K+E+G+H+|K+E+H+|K+A+H+K+|K+E+H+E+U+K+|C+O+F+|H+A+C+K+|G+E+H+|K+U+H+)$/, 'אחח'],
     [/^(O+W+|O+U+C+H+|O+U+)$/, 'איי'],
     [/^(H+U+H+)$/, 'הא'],
