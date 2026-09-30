@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.26.13
+// @version      1.26.14
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -938,6 +938,7 @@
         w: ((x1 - x0) / 1000) * piece.w,
         h: ((y1 - y0) / 1000) * piece.h,
         lines,
+        original,
         translation: fixSounds(original, translation),
       }));
   }
@@ -1250,7 +1251,7 @@
     for (const [n, piece] of pieces.entries()) {
       const margin = Math.max(6, piece.h * 0.02);
       for (const b of results[n]) {
-        const g = { x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation };
+        const g = { x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation, o: b.original };
         g.cutTop = !piece.first && b.y < margin;
         g.cutBottom = !piece.last && b.y + b.h > piece.h - margin;
         (g.cutTop || g.cutBottom ? cut : whole).push(g);
@@ -1297,7 +1298,7 @@
           redone = (await translatePiece(piece, apiKey))
             // must be whole this time: not running into the crop's own edges
             .filter((b) => (piece.first || b.y >= margin) && (piece.last || b.y + b.h <= piece.h - margin))
-            .map((b) => ({ x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation }))
+            .map((b) => ({ x: b.x, y: piece.y + b.y, w: b.w, h: b.h, n: b.lines, t: b.translation, o: b.original }))
             .filter((b) => sameBubble(b, g));
         } catch (_) { /* keep the halves below */ }
       }
@@ -1309,6 +1310,25 @@
         kept.push({ ...g, n: g.parts.reduce((s, p) => s + (p.n || 1), 0),
           t: g.parts.map((p) => p.t.replace(/^\s*(\.\.\.|…)\s*|\s*(\.\.\.|…)\s*$/g, '')).join(' ') });
       }
+    }
+    // A translation far shorter than its original (e.g. two letters for a whole sentence) came
+    // back cut off: translate just that bubble again.
+    const tooShort = (g) => {
+      const o = String(g.o || '').replace(/[^A-Za-z\u3131-\uD79D\u3040-\u30FF\u4E00-\u9FFF]/g, '');
+      const t = String(g.t || '').replace(/[^\u05D0-\u05EA]/g, '');
+      return o.length >= 12 && t.length < o.length * 0.2;
+    };
+    for (const g of kept) {
+      if (!tooShort(g)) continue;
+      try {
+        const pad = Math.max(60, g.h * 0.6);
+        const y0 = Math.max(0, Math.round(g.y - pad)), y1 = Math.min(sentH, Math.round(g.y + g.h + pad));
+        const piece = crop(y0, y1 - y0);
+        const again = (await translatePiece(piece, apiKey))
+          .map((b) => ({ x: b.x, y: piece.y + b.y, w: b.w, h: b.h, t: b.translation, o: b.original }))
+          .find((b) => sameBubble(b, g) && !tooShort(b));
+        if (again) g.t = again.t;
+      } catch (_) { /* keep what we have */ }
     }
     for (const g of kept) {
       out.push({ x: g.x / sentW, y: g.y / sentH, w: g.w / sentW, h: g.h / sentH, n: g.n, t: g.t });
