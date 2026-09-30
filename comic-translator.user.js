@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.27.0
+// @version      1.28.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -93,6 +93,16 @@
   const KEY_NAMES = `names:${host}`;
   let glossary = JSON.parse(await store.get(KEY_NAMES, '{}')); // lower-case original -> { o, h }
   const saveGlossary = () => store.set(KEY_NAMES, JSON.stringify(glossary));
+  // How much was translated this month (⚙ → 13), to compare with Google's bill.
+  const KEY_USAGE = 'usage';
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
+  let usage = JSON.parse(await store.get(KEY_USAGE, '{}'));
+  function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0 }) {
+    if (usage.month !== thisMonth()) usage = { month: thisMonth(), since: `${new Date().getDate()}/${new Date().getMonth() + 1}`, pics: 0, calls: 0, inTok: 0, outTok: 0 };
+    usage.pics += pics; usage.calls += calls; usage.inTok += inTok || 0; usage.outTok += outTok || 0;
+    store.set(KEY_USAGE, JSON.stringify(usage));
+  }
   // Honorifics aren't names: their spelling is fixed in the prompt, and a wrong one saved here
   // (e.g. "Hyung = יונג") would be repeated everywhere.
   const HONORIFIC = /^(hyung|hyungnim|hyeong|noona|nuna|oppa|unnie|eonni|sunbae|sunbaenim|seonbae|hoobae|ahjussi|ajussi|ajumma|ahjumma|senpai|sensei|sama|san|kun|chan|ssi|nim)$/i;
@@ -322,7 +332,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -341,6 +351,15 @@
           await store.set(KEY_NOTES, storyNotes);
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
         }
+      }
+      else if (choice === '13') {
+        const u = usage.month === thisMonth() ? usage : { pics: 0, calls: 0, inTok: 0, outTok: 0, since: '' };
+        const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' מיליון' : n >= 1e4 ? Math.round(n / 1000) + ' אלף' : (n / 1000).toFixed(1) + ' אלף');
+        alert(`שימוש החודש${u.since ? ` (מאז ${u.since})` : ''}:\n` +
+          `• ${u.pics} תמונות תורגמו\n• ${u.calls} בקשות ל-Google\n` +
+          `• ${k(u.inTok)} טוקנים נשלחו, ${k(u.outTok)} חזרו\n\n` +
+          `המחיר המדויק מופיע ב-Google (AI Studio ← Spend). כדי לדעת מחיר לפרק: הסכום שם חלקי מספר הפרקים שקראת.\n` +
+          `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)`);
       }
       else if (choice === '12') {
         const found = await checkForUpdate(true);
@@ -900,6 +919,8 @@
       store.set(KEY_UNSUPPORTED, JSON.stringify([...unsupported]));
       return geminiRequest(piece, apiKey, imagePart, model);
     }
+    const um = res?.usageMetadata || {};
+    countUsage({ calls: 1, inTok: um.promptTokenCount, outTok: (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0) });
     return parseGemini(res, piece);
   }
 
@@ -1181,6 +1202,7 @@
         }],
       }
     );
+    countUsage({ calls: 1, inTok: res.usage?.input_tokens, outTok: res.usage?.output_tokens });
     if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const parsed = JSON.parse(text);
@@ -2074,6 +2096,7 @@
       setStatus(el, 'מתרגם…');
       translateElement(el)
         .then((bubbles) => {
+          countUsage({ pics: 1 });
           if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
             cache[key] = { t: Date.now(), b: bubbles };
             saveCache();
