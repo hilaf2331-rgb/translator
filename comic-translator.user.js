@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.30.1
+// @version      1.31.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -100,11 +100,12 @@
   const pad2 = (n) => String(n).padStart(2, '0');
   const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
   let usage = JSON.parse(await store.get(KEY_USAGE, '{}'));
-  function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0 }) {
+  function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0, cachedTok = 0 }) {
     if (usage.month !== thisMonth()) usage = { month: thisMonth(), since: `${new Date().getDate()}/${new Date().getMonth() + 1}`, pics: 0, calls: 0, inTok: 0, outTok: 0 };
     const today = new Date().toDateString();
     if (usage.day !== today) { usage.day = today; usage.dayPics = 0; usage.dayAllowed = DAILY_PICS; }
     usage.pics += pics; usage.calls += calls; usage.inTok += inTok || 0; usage.outTok += outTok || 0;
+    usage.cachedTok = (usage.cachedTok || 0) + (cachedTok || 0);
     store.set(KEY_USAGE, JSON.stringify(usage));
   }
   // Honorifics aren't names: their spelling is fixed in the prompt, and a wrong one saved here
@@ -361,7 +362,7 @@
         const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' מיליון' : n >= 1e4 ? Math.round(n / 1000) + ' אלף' : (n / 1000).toFixed(1) + ' אלף');
         alert(`שימוש החודש${u.since ? ` (מאז ${u.since})` : ''}:\n` +
           `• ${u.pics} תמונות תורגמו (היום: ${usage.day === new Date().toDateString() ? usage.dayPics : 0})\n• ${u.calls} בקשות ל-Google\n` +
-          `• ${k(u.inTok)} טוקנים נשלחו, ${k(u.outTok)} חזרו\n\n` +
+          `• ${k(u.inTok)} טוקנים נשלחו (מהם ${k(u.cachedTok || 0)} מהמטמון, בהנחה), ${k(u.outTok)} חזרו\n\n` +
           `המחיר המדויק מופיע ב-Google (AI Studio ← Spend). כדי לדעת מחיר לפרק: הסכום שם חלקי מספר הפרקים שקראת.\n` +
           `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)\n\nאחרי ${DAILY_PICS} תמונות ביום המתרגם שואל אם להמשיך.`);
         if (usage.dayStop === usage.day && confirm('המתרגם עצר היום בגלל המגבלה היומית. להמשיך לתרגם?')) {
@@ -749,11 +750,12 @@
   // Anthropic keys with "sk-ant-". Google's new AQ. keys only work in the x-goog-api-key header.
   const providerOf = (key) => (key.startsWith('sk-ant-') ? 'claude' : 'gemini');
 
-  function buildPrompt(piece, coords) {
+  // The instructions are split in two: the rules, the same for every picture (sent first, so Google
+  // and Anthropic can reuse them from their cache and bill them at a fraction), and the few lines
+  // about this one picture.
+  function buildRules(coords) {
     return (
-      `This is a ${piece.w}x${piece.h} px piece of a comic page` +
-      (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') +
-      `. Find every speech bubble, thought bubble and narration/caption box that contains ` +
+      `You translate comic pages. In the picture you get, find every speech bubble, thought bubble and narration/caption box that contains ` +
       (source.lang
         ? `${source.lang} text`
         : `text in a language other than ${TARGET_LANG} (for example English, Korean, Japanese or Chinese)`) +
@@ -800,13 +802,9 @@
       `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
       `me?!": "אתה היית נשאר בשקט אם היית במקומי?!"). ` +
-      (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
-      (piece.ctx?.length
-        ? `After the main picture come ${piece.ctx.length} small extra picture(s): ` +
-          piece.ctx.map((c) => (c.where === 'above' ? 'the part of the page right above it' : 'the part of the page right below it')).join(', then ') +
-          `. They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
-          `never return bubbles from them, and all coordinates are for the main (first) picture only. `
-        : '') +
+      `Sometimes small extra pictures follow the main picture: the parts of the page right above and below it. ` +
+      `They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
+      `never return bubbles from them, and all coordinates are for the main (first) picture only. ` +
       `Flirting and romance should sound natural, not cheesy. Narration boxes can be a little more written ` +
       `but still simple. Keep lines short so they fit the bubble. No nikud. ` +
       `${TARGET_LANG} marks gender in verbs, adjectives and "you": work out who is speaking and to whom from ` +
@@ -814,13 +812,6 @@
       `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
       `Use the characters' names and how they are drawn; the person spoken to is often drawn in the panel the bubble's ` +
       `tail points to, above or below the bubble, so look there too. Only when there is no clue at all, use masculine forms. ` +
-      (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. These are about the ` +
-        `characters they name; other characters (side characters, strangers) can be of any gender, so judge them from the art. ` : '') +
-      // Names: one Hebrew spelling per character across the whole story.
-      (Object.keys(glossary).length
-        ? `Names already used in this story; always spell them exactly like this: ` +
-          Object.values(glossary).slice(-80).map((g) => `${g.o} = ${g.h}`).join(', ') + `. `
-        : '') +
       `In "names", list every person or place name you wrote in Hebrew (original spelling and Hebrew spelling). ` +
       (softenSwears
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
@@ -830,6 +821,28 @@
       `If the image is not a comic or has no such text, return an empty list.`
     );
   }
+  function buildTask(piece) {
+    return (
+      `This is a ${piece.w}x${piece.h} px piece of a comic page` +
+      (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') + '. ' +
+      (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
+      (piece.ctx?.length
+        ? `After the main picture come ${piece.ctx.length} small extra picture(s): ` +
+          piece.ctx.map((c) => (c.where === 'above' ? 'the part of the page right above it' : 'the part of the page right below it')).join(', then ') +
+          `. They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
+          `never return bubbles from them, and all coordinates are for the main (first) picture only. `
+        : '') +
+      (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. These are about the ` +
+        `characters they name; other characters (side characters, strangers) can be of any gender, so judge them from the art. ` : '') +
+      // Names: one Hebrew spelling per character across the whole story.
+      (Object.keys(glossary).length
+        ? `Names already used in this story; always spell them exactly like this: ` +
+          Object.values(glossary).slice(-80).map((g) => `${g.o} = ${g.h}`).join(', ') + `. `
+        : '') +
+      ''
+    );
+  }
+
 
   async function callApi(url, headers, body) {
     const r = await gmRequest({
@@ -928,18 +941,19 @@
       return geminiRequest(piece, apiKey, imagePart, model);
     }
     const um = res?.usageMetadata || {};
-    countUsage({ calls: 1, inTok: um.promptTokenCount, outTok: (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0) });
+    countUsage({ calls: 1, inTok: um.promptTokenCount, outTok: (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0), cachedTok: um.cachedContentTokenCount });
     return parseGemini(res, piece);
   }
 
   function geminiBody(piece, imagePart, thinkingConfig, lowRes) {
     return {
+      systemInstruction: { parts: [{ text: buildRules('box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') }] },
       contents: [{
         role: 'user',
         parts: [
+          { text: buildTask(piece) },
           imagePart,
           ...(piece.ctx || []).map((c) => ({ inlineData: { mimeType: 'image/jpeg', data: c.data } })),
-          { text: buildPrompt(piece, 'box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') },
         ],
       }],
       // Adult fiction has swearing, insults and violence: don't let those filters drop whole pages.
@@ -1194,6 +1208,7 @@
       {
         model: CLAUDE_MODEL,
         max_tokens: 8000,
+        system: [{ type: 'text', text: buildRules('the box in pixel coordinates of this image (x, y = top-left corner, w, h = size)'), cache_control: { type: 'ephemeral' } }],
         fallbacks: 'default',
         thinking: { type: 'adaptive' },
         output_config: {
@@ -1203,14 +1218,14 @@
         messages: [{
           role: 'user',
           content: [
+            { type: 'text', text: buildTask(piece) },
             { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: piece.data } },
             ...(piece.ctx || []).map((c) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: c.data } })),
-            { type: 'text', text: buildPrompt(piece, 'the box in pixel coordinates of this image (x, y = top-left corner, w, h = size)') },
           ],
         }],
       }
     );
-    countUsage({ calls: 1, inTok: res.usage?.input_tokens, outTok: res.usage?.output_tokens });
+    countUsage({ calls: 1, inTok: (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0), outTok: res.usage?.output_tokens, cachedTok: res.usage?.cache_read_input_tokens });
     if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const parsed = JSON.parse(text);
