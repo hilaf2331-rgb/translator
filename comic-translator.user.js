@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.33.0
+// @version      1.34.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -364,7 +364,8 @@
           `• ${u.pics} תמונות תורגמו (היום: ${usage.day === new Date().toDateString() ? usage.dayPics : 0})\n• ${u.calls} בקשות ל-Google\n` +
           `• ${k(u.inTok)} טוקנים נשלחו (מהם ${k(u.cachedTok || 0)} מהמטמון, בהנחה), ${k(u.outTok)} חזרו\n\n` +
           `המחיר המדויק מופיע ב-Google (AI Studio ← Spend). כדי לדעת מחיר לפרק: הסכום שם חלקי מספר הפרקים שקראת.\n` +
-          `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)\n\nאחרי ${DAILY_PICS} תמונות ביום המתרגם שואל אם להמשיך.`);
+          `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)\n\nאחרי ${DAILY_PICS} תמונות ביום המתרגם שואל אם להמשיך.` +
+          `\nמטמון ההוראות: ${rulesCache.name && rulesCache.until > Date.now() ? 'פועל ✓' : rulesCache.why ? 'לא זמין (' + rulesCache.why + ')' : 'עוד לא נוצר'}`);
         if (usage.dayStop === usage.day && confirm('המתרגם עצר היום בגלל המגבלה היומית. להמשיך לתרגם?')) {
           usage.dayStop = ''; usage.dayAllowed = (usage.dayPics || 0) + DAILY_PICS; store.set(KEY_USAGE, JSON.stringify(usage));
           nearView.forEach((el) => { state.delete(el); check(el); });
@@ -928,6 +929,56 @@
   }
 
   // imagePart is either the picture itself (inlineData) or a link Google downloads (fileData).
+  const geminiRules = () => buildRules('box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000');
+
+  // The rules are the same for every picture and about half of what each request sends. Keep
+  // them at Google once ("context cache") and have each request point to them: cached tokens are
+  // billed at a fraction. Kept an hour; if Google won't cache for this model, just send the rules
+  // with every request as before.
+  const KEY_RULES_CACHE = 'rulesCache';
+  let rulesCache = JSON.parse(await store.get(KEY_RULES_CACHE, '{}')); // { sig, name, until, off, why }
+  const sigOf = (t) => { let h = 0; for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0; return String(h); };
+  let creatingCache = null;
+  function cachedRules(apiKey, model) {
+    // pictures that start together wait for the same cache instead of each creating one
+    creatingCache ||= makeCachedRules(apiKey, model).finally(() => { creatingCache = null; });
+    return creatingCache;
+  }
+  async function makeCachedRules(apiKey, model) {
+    const service = Number(await store.get(KEY_SERVICE, 0)) || 0;
+    if (service !== 0) return null; // only the Gemini API endpoint, not Agent Platform
+    const rules = geminiRules();
+    const sig = sigOf(model + rules + apiKey.slice(-6));
+    const now = Date.now();
+    if (rulesCache.off && rulesCache.off > now) return null;
+    if (rulesCache.sig === sig && rulesCache.name && rulesCache.until > now + 60000) return rulesCache.name;
+    // Google needs a minimum size to cache; if the rules are shorter, they're repeated (harmless,
+    // and still far cheaper than sending them in full every time).
+    let text = rules;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await callApi('https://generativelanguage.googleapis.com/v1beta/cachedContents', { 'x-goog-api-key': apiKey }, {
+          model: `models/${model}`,
+          systemInstruction: { parts: [{ text }] },
+          ttl: '3600s',
+        });
+        rulesCache = { sig, name: res.name, until: now + 3500 * 1000 };
+        store.set(KEY_RULES_CACHE, JSON.stringify(rulesCache));
+        return res.name;
+      } catch (err) {
+        if (/minimum|too small|at least|min_total_token|token count/i.test(err.message) && attempt < 2) {
+          text += '\n\n(The same rules once more, for reference:)\n' + rules;
+          continue;
+        }
+        console.warn('[comic-translator] rules cache', err);
+        rulesCache = { off: now + 3600 * 1000, why: String(err.message).slice(0, 120) };
+        store.set(KEY_RULES_CACHE, JSON.stringify(rulesCache));
+        return null;
+      }
+    }
+    return null;
+  }
+
   async function geminiRequest(piece, apiKey, imagePart, model = GEMINI_MODEL) {
     // Economy mode asks for the least thinking and a lower image resolution. If this model
     // rejects either option, drop it, remember that, and try again.
@@ -937,9 +988,16 @@
       ? { thinkingBudget: 0 }
       : { thinkingLevel: minimal ? 'minimal' : 'low' };
     let res;
+    if (piece.cacheName === undefined) piece.cacheName = await cachedRules(apiKey, model);
     try {
       res = await callGemini(apiKey, geminiBody(piece, imagePart, thinkingConfig, lowRes), model);
     } catch (err) {
+      if (piece.cacheName && err.status >= 400 && err.status < 500 && /cache|cached/i.test(err.message)) {
+        // The cache expired or was refused: forget it and send the rules in full this time.
+        rulesCache = {}; store.set(KEY_RULES_CACHE, '{}');
+        piece.cacheName = null;
+        return geminiRequest(piece, apiKey, imagePart, model);
+      }
       if (err.status !== 400 || !(minimal || lowRes)) throw err;
       const bad = /media/i.test(err.message) ? 'mediaResolution' : /think/i.test(err.message) ? 'minimal' : null;
       if (!bad) throw err;
@@ -954,7 +1012,9 @@
 
   function geminiBody(piece, imagePart, thinkingConfig, lowRes) {
     return {
-      systemInstruction: { parts: [{ text: buildRules('box_2d as [y_min, x_min, y_max, x_max] normalized to 0-1000') }] },
+      ...(piece.cacheName
+        ? { cachedContent: piece.cacheName }
+        : { systemInstruction: { parts: [{ text: geminiRules() }] } }),
       contents: [{
         role: 'user',
         parts: [
