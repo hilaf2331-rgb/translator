@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.31.0
+// @version      1.32.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -802,6 +802,9 @@
       `bubble before it: fill them in from there so the ${TARGET_LANG} means the same thing, never the opposite ` +
       `(after "Stay still, Tay." the reply "Would you, if you were me?!" means "would you stay still if you were ` +
       `me?!": "אתה היית נשאר בשקט אם היית במקומי?!"). ` +
+      `Several pictures may be sent together: then they are consecutive parts of one page, top to bottom (the task ` +
+      `says how many). Read them as one page and one conversation, and for each bubble also return "picture", the ` +
+      `number of the picture it is in (1 = the first), with box_2d relative to that picture alone. ` +
       `Sometimes small extra pictures follow the main picture: the parts of the page right above and below it. ` +
       `They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
       `never return bubbles from them, and all coordinates are for the main (first) picture only. ` +
@@ -823,8 +826,11 @@
   }
   function buildTask(piece) {
     return (
-      `This is a ${piece.w}x${piece.h} px piece of a comic page` +
-      (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') + '. ' +
+      (piece.batch
+        ? `Here are ${piece.batch.length} consecutive pictures of a comic page, top to bottom (` +
+          piece.batch.map((p, i) => `picture ${i + 1}: ${p.w}x${p.h} px`).join(', ') + '). '
+        : `This is a ${piece.w}x${piece.h} px piece of a comic page` +
+          (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') + '. ') +
       (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
       (piece.ctx?.length
         ? `After the main picture come ${piece.ctx.length} small extra picture(s): ` +
@@ -875,6 +881,7 @@
           required: ['box_2d', 'lines', 'original', 'translation'],
           properties: {
             box_2d: { type: 'ARRAY', items: { type: 'INTEGER' } },
+            picture: { type: 'INTEGER' },
             lines: { type: 'INTEGER' },
             original: { type: 'STRING' },
             translation: { type: 'STRING' },
@@ -952,7 +959,7 @@
         role: 'user',
         parts: [
           { text: buildTask(piece) },
-          imagePart,
+          ...(piece.batch ? piece.batch.map((p) => ({ inlineData: { mimeType: 'image/jpeg', data: p.data } })) : [imagePart]),
           ...(piece.ctx || []).map((c) => ({ inlineData: { mimeType: 'image/jpeg', data: c.data } })),
         ],
       }],
@@ -984,15 +991,19 @@
     learnNames(parsed.names);
     return (parsed.bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
-      .map(({ box_2d: [y0, x0, y1, x1], lines, original, translation }) => ({
-        x: (x0 / 1000) * piece.w,
-        y: (y0 / 1000) * piece.h,
-        w: ((x1 - x0) / 1000) * piece.w,
-        h: ((y1 - y0) / 1000) * piece.h,
+      .map(({ box_2d: [y0, x0, y1, x1], picture, lines, original, translation }) => {
+        const pic = piece.batch ? Math.min(piece.batch.length, Math.max(1, picture || 1)) - 1 : 0;
+        const P = piece.batch ? piece.batch[pic] : piece;
+        return {
+        pic,
+        x: (x0 / 1000) * P.w,
+        y: (y0 / 1000) * P.h,
+        w: ((x1 - x0) / 1000) * P.w,
+        h: ((y1 - y0) / 1000) * P.h,
         lines,
         original,
         translation: fixSounds(original, translation),
-      }));
+      }; });
   }
 
   // ----- Sounds: a fixed Hebrew for bubbles that are only a sound -----
@@ -1275,6 +1286,60 @@
     return out;
   }
 
+  // Many sites cut a chapter into a hundred small pictures. Sending each on its own repeats all
+  // the instructions a hundred times, so neighbouring small pictures go together in one request
+  // (each still at full resolution; the model also sees who is next to whom). Returns one promise
+  // per element, like translateElement.
+  const BATCH_MAX = 4;
+  function translateGroup(els) {
+    if (els.length === 1) return [translateElement(els[0])];
+    const settle = els.map(() => { let res, rej; const p = new Promise((a, b) => { res = a; rej = b; }); return { p, res, rej }; });
+    (async () => {
+      const apiKey = await store.get(KEY_API, '');
+      const solo = (i) => translateElement(els[i]).then(settle[i].res, settle[i].rej);
+      if (!apiKey || providerOf(apiKey) !== 'gemini') return els.forEach((_, i) => solo(i));
+      const items = [];
+      await Promise.all(els.map(async (el, i) => {
+        try {
+          const bitmap = await loadBitmap(el);
+          const fp = fingerprint(bitmap);
+          const seen = fp && cache[fp];
+          if (seen) {
+            seen.t = Date.now();
+            const again = seen.b.map((b) => ({ ...b }));
+            makePatches(bitmap, again);
+            Object.defineProperty(again, 'reused', { value: true });
+            return settle[i].res(again);
+          }
+          const sliced = slice(bitmap);
+          if (sliced.pieces.length !== 1) return solo(i); // tall strips go on their own
+          items.push({ i, bitmap, fp, sliced });
+        } catch (_) { solo(i); }
+      }));
+      if (items.length < 2) return items.forEach((it) => solo(it.i));
+      items.sort((a, b) => a.i - b.i);
+      const batch = { batch: items.map((it) => it.sliced.pieces[0]), first: true, last: true, context: contextBefore(els[items[0].i]) };
+      let found;
+      try {
+        found = await translatePiece(batch, apiKey);
+      } catch (err) {
+        return items.forEach((it) => solo(it.i));
+      }
+      if (batch.blocked) return items.forEach((it) => solo(it.i)); // one picture set the filter off: try each alone
+      items.forEach(async (it, n) => {
+        try {
+          const mine = found.filter((b) => b.pic === n);
+          const out = await translateBitmap(it.bitmap, apiKey, '', {}, { sliced: it.sliced, results: [mine] });
+          markEdges(out, it.bitmap.height);
+          makePatches(it.bitmap, out);
+          if (it.fp && !out.blocked) cache[it.fp] = { t: Date.now(), b: out };
+          settle[it.i].res(out);
+        } catch (err) { settle[it.i].rej(err); }
+      });
+    })().catch((err) => settle.forEach((x) => x.rej(err)));
+    return settle.map((x) => x.p);
+  }
+
   // A short code for how a picture looks (its size plus a tiny grey thumbnail), the same for the
   // same picture however it's served.
   function fingerprint(bitmap) {
@@ -1340,13 +1405,13 @@
   }
 
   // Translates a whole picture (cut into pieces if it's tall). Bubbles come back as fractions.
-  async function translateBitmap(bitmap, apiKey, context = '', around = {}) {
-    const { pieces, sentW, sentH, pieceH, crop } = slice(bitmap);
+  async function translateBitmap(bitmap, apiKey, context = '', around = {}, pre = null) {
+    const { pieces, sentW, sentH, pieceH, crop } = pre?.sliced || slice(bitmap);
     if (context) pieces[0].context = context;
     if (around.above) (pieces[0].ctx ||= []).push({ where: 'above', data: around.above });
     if (around.below) (pieces[pieces.length - 1].ctx ||= []).push({ where: 'below', data: around.below });
     const out = [];
-    const results = await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
+    const results = pre?.results || await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
     // A piece the safety filter refused: often only one part of the drawing sets it off. Try its
     // top and bottom halves on their own, so the bubbles in the other part still get translated.
     for (const p of pieces.slice()) {
@@ -2164,6 +2229,59 @@
     return list.length > 4;
   }
 
+  // Whether a picture may be translated now (cost guards); counts it for today if so.
+  function admit(el, key) {
+    if (!cache[key] && churning(el)) { setStatus(el, 'לא מתרגם: התמונה כאן מתחלפת כל הזמן'); return false; }
+    // Cost guard: after a day's worth of pictures, ask before going on.
+    countUsage({});
+    if (!cache[key] && usage.dayPics >= usage.dayAllowed) {
+      if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); return false; }
+      if (confirm(`תורגמו היום ${usage.dayPics} תמונות. להמשיך לתרגם (עוד ${DAILY_PICS})?\nזה עוזר לשמור על ההוצאה. אפשר לראות את השימוש ב-⚙ ← 13.`)) {
+        usage.dayAllowed += DAILY_PICS;
+      } else {
+        usage.dayStop = usage.day;
+      }
+      store.set(KEY_USAGE, JSON.stringify(usage));
+      if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); return false; }
+    }
+    usage.dayPics++; // counted when it starts, so pictures started together can't slip past the limit
+    setStatus(el, 'מתרגם…');
+    return true;
+  }
+
+  // What happens when a picture's translation comes back (or fails).
+  function finish(el, key, promise) {
+    return promise
+      .then((bubbles) => {
+        if (bubbles.reused) usage.dayPics--; else countUsage({ pics: 1 });
+        if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
+          cache[key] = { t: Date.now(), b: bubbles };
+          saveCache();
+        }
+        if (!enabled || state.get(el)?.key !== key) return;
+        setStatus(el, bubbles.blocked || null);
+        drawBubbles(el, bubbles);
+      })
+      .catch((err) => {
+        console.warn('[comic-translator]', err);
+        if (state.get(el)?.key === key) state.set(el, { key, error: true });
+        // A picture that couldn't be downloaded is often fine a few seconds later (the image
+        // server was busy or refused a burst of requests): try it again quietly, twice.
+        const tries = retries.get(key) || 0;
+        if (enabled && tries < 2 && /image|HTTP|network|timeout|fetch|שרת העזר/i.test(err.message) &&
+            !/api.key|authentication|permission|quota|מכסה/i.test(err.message)) {
+          retries.set(key, tries + 1);
+          setStatus(el, 'מנסה שוב…');
+          setTimeout(() => check(el, true), tries ? 15000 : 4000);
+          return;
+        }
+        if (enabled) setStatus(el, 'שגיאה: ' + err.message);
+        if (/api.key|authentication|permission|x-api-key/i.test(err.message)) {
+          alert('מפתח ה-API לא עובד. אפשר להחליף אותו דרך כפתור ⚙');
+        }
+      });
+  }
+
   async function pump() {
     if (!reading()) return;
     for (const sm of [...waitingSeams]) scheduleSeam(sm);
@@ -2182,52 +2300,22 @@
       for (let i = 1; i < queue.length; i++) if (dist(queue[i]) < dist(queue[best])) best = i;
       const { el, key } = queue.splice(best, 1)[0];
       if (state.get(el)?.key !== key) continue; // page changed while waiting
-      if (!cache[key] && churning(el)) { setStatus(el, 'לא מתרגם: התמונה כאן מתחלפת כל הזמן'); continue; }
-      // Cost guard: after a day's worth of pictures, ask before going on.
-      countUsage({});
-      if (!cache[key] && usage.dayPics >= usage.dayAllowed) {
-        if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); continue; }
-        if (confirm(`תורגמו היום ${usage.dayPics} תמונות. להמשיך לתרגם (עוד ${DAILY_PICS})?\nזה עוזר לשמור על ההוצאה. אפשר לראות את השימוש ב-⚙ ← 13.`)) {
-          usage.dayAllowed += DAILY_PICS;
-        } else {
-          usage.dayStop = usage.day;
-        }
-        store.set(KEY_USAGE, JSON.stringify(usage));
-        if (usage.dayStop === usage.day) { setStatus(el, 'עצרתי: הגעת למגבלה היומית (⚙ ← 13)'); continue; }
+      if (!admit(el, key)) continue;
+      // Neighbours right below that are waiting too go along in the same request.
+      const group = [{ el, key }];
+      for (let cur = el; group.length < BATCH_MAX; ) {
+        const nb = neighbor(cur, 'below');
+        const qi = nb ? queue.findIndex((q) => q.el === nb) : -1;
+        if (qi < 0) break;
+        const mate = queue[qi];
+        if (state.get(nb)?.key !== mate.key || !admit(nb, mate.key)) break;
+        queue.splice(qi, 1);
+        group.push(mate);
+        cur = nb;
       }
-      usage.dayPics++; // counted when it starts, so pictures started together can't slip past the limit
       running++;
-      setStatus(el, 'מתרגם…');
-      translateElement(el)
-        .then((bubbles) => {
-          if (bubbles.reused) usage.dayPics--; else countUsage({ pics: 1 });
-          if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
-            cache[key] = { t: Date.now(), b: bubbles };
-            saveCache();
-          }
-          if (!enabled || state.get(el)?.key !== key) return;
-          setStatus(el, bubbles.blocked || null);
-          drawBubbles(el, bubbles);
-        })
-        .catch((err) => {
-          console.warn('[comic-translator]', err);
-          if (state.get(el)?.key === key) state.set(el, { key, error: true });
-          // A picture that couldn't be downloaded is often fine a few seconds later (the image
-          // server was busy or refused a burst of requests): try it again quietly, twice.
-          const tries = retries.get(key) || 0;
-          if (enabled && tries < 2 && /image|HTTP|network|timeout|fetch|שרת העזר/i.test(err.message) &&
-              !/api.key|authentication|permission|quota|מכסה/i.test(err.message)) {
-            retries.set(key, tries + 1);
-            setStatus(el, 'מנסה שוב…');
-            setTimeout(() => check(el, true), tries ? 15000 : 4000);
-            return;
-          }
-          if (enabled) setStatus(el, 'שגיאה: ' + err.message);
-          if (/api.key|authentication|permission|x-api-key/i.test(err.message)) {
-            alert('מפתח ה-API לא עובד. אפשר להחליף אותו דרך כפתור ⚙');
-          }
-        })
-        .finally(() => { running--; firstDone = true; pump(); });
+      const done = translateGroup(group.map((g) => g.el)).map((pr, n) => finish(group[n].el, group[n].key, pr));
+      Promise.allSettled(done).finally(() => { running--; firstDone = true; pump(); });
     }
   }
 
