@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.34.1
+// @version      1.35.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -112,19 +112,31 @@
   // (e.g. "Hyung = יונג") would be repeated everywhere.
   const HONORIFIC = /^(hyung|hyungnim|hyeong|noona|nuna|oppa|unnie|eonni|sunbae|sunbaenim|seonbae|hoobae|ahjussi|ajussi|ajumma|ahjumma|senpai|sensei|sama|san|kun|chan|ssi|nim)$/i;
   for (const k of Object.keys(glossary)) if (HONORIFIC.test(k)) delete glossary[k];
+  // Learns the names in a translation. Returns the spellings to correct: only the names seen
+  // lately are sent with each request (to keep requests small), so for the others the model may
+  // pick another spelling; it's then replaced with the saved one.
   function learnNames(list) {
     let changed = false;
+    const fixes = [];
     for (const n of list || []) {
       const o = String(n?.original || '').trim(), h = String(n?.hebrew || '').trim();
       const k = o.toLowerCase();
-      if (!o || !h || o.length > 40 || glossary[k] || HONORIFIC.test(o)) continue; // the first spelling wins
-      glossary[k] = { o, h };
+      if (!o || !h || o.length > 40 || HONORIFIC.test(o)) continue;
+      if (glossary[k]) { // the first spelling wins
+        if (glossary[k].h !== h && h.length > 1) fixes.push([h, glossary[k].h]);
+        glossary[k].t = Date.now();
+        changed = true;
+        continue;
+      }
+      glossary[k] = { o, h, t: Date.now() };
       changed = true;
     }
     const keys = Object.keys(glossary);
     if (keys.length > 150) for (const k of keys.slice(0, keys.length - 150)) delete glossary[k];
     if (changed) saveGlossary();
+    return fixes;
   }
+  const fixNames = (text, fixes) => (fixes.length && typeof text === 'string' ? fixes.reduce((t, [wrong, right]) => t.split(wrong).join(right), text) : text);
   const ECONOMY_EDGE = 1024; // long edge of each piece in economy mode (normal: MAX_EDGE)
   // Settings a model turned out not to accept, remembered so we stop sending them.
   const KEY_UNSUPPORTED = 'unsupportedOptions';
@@ -834,17 +846,16 @@
           (piece.first && piece.last ? '' : ' (a vertical webtoon strip, cut into pieces)') + '. ') +
       (piece.context ? `For context, the lines just before this picture were (already translated): ${piece.context} ` : '') +
       (piece.ctx?.length
-        ? `After the main picture come ${piece.ctx.length} small extra picture(s): ` +
-          piece.ctx.map((c) => (c.where === 'above' ? 'the part of the page right above it' : 'the part of the page right below it')).join(', then ') +
-          `. They are only there so you can see who is speaking and to whom (a bubble's tail often points into them): ` +
-          `never return bubbles from them, and all coordinates are for the main (first) picture only. `
+        ? `After the main picture comes one small extra picture: ` +
+          piece.ctx[0].where.map((w) => (w === 'above' ? 'the part of the page right above it' : 'the part of the page right below it')).join(' on top, then (below a grey line) ') +
+          `. It is only there so you can see who is speaking and to whom: never return bubbles from it. `
         : '') +
       (storyNotes ? `Notes from the reader about this story (trust them): ${storyNotes}. These are about the ` +
         `characters they name; other characters (side characters, strangers) can be of any gender, so judge them from the art. ` : '') +
       // Names: one Hebrew spelling per character across the whole story.
       (Object.keys(glossary).length
         ? `Names already used in this story; always spell them exactly like this: ` +
-          Object.values(glossary).slice(-80).map((g) => `${g.o} = ${g.h}`).join(', ') + `. `
+          Object.values(glossary).sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, 20).map((g) => `${g.o} = ${g.h}`).join(', ') + `. `
         : '') +
       ''
     );
@@ -1053,7 +1064,7 @@
     if (!cand?.content?.parts) return []; // empty
     const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
     const parsed = JSON.parse(text);
-    learnNames(parsed.names);
+    const nameFixes = learnNames(parsed.names);
     return (parsed.bubbles || [])
       .filter((b) => Array.isArray(b.box_2d) && b.box_2d.length === 4)
       .map(({ box_2d: [y0, x0, y1, x1], picture, lines, original, translation }) => {
@@ -1067,7 +1078,7 @@
         h: ((y1 - y0) / 1000) * P.h,
         lines,
         original,
-        translation: fixSounds(original, translation),
+        translation: fixNames(fixSounds(original, translation), nameFixes),
       }; });
   }
 
@@ -1305,8 +1316,8 @@
     if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const parsed = JSON.parse(text);
-    learnNames(parsed.names);
-    return (parsed.bubbles || []).map((b) => ({ ...b, translation: fixSounds(b.original, b.translation) }));
+    const nameFixes = learnNames(parsed.names);
+    return (parsed.bubbles || []).map((b) => ({ ...b, translation: fixNames(fixSounds(b.original, b.translation), nameFixes) }));
   }
 
   // Bubbles in pixel coordinates of the piece.
@@ -1431,21 +1442,30 @@
   // in the next picture. Send a small strip of the pictures right above and below along, only
   // so the model sees who is who (for he/she in Hebrew).
   async function picturesAround(el) {
-    const strip = async (other, where) => {
+    // Only for short pictures (a panel or two): a tall picture holds its scene, and its people, itself.
+    const own = naturalSize(el);
+    if (!own.w || own.h > own.w * 1.6) return {};
+    const part = async (other, where) => {
       if (!other) return null;
       const bmp = await Promise.race([loadBitmap(other), new Promise((_, no) => setTimeout(no, 4000))]);
-      const W = bmp.width, H = bmp.height, h = Math.min(H, Math.round(W * 0.9));
-      const sw = 384, sh = Math.round((h / W) * sw);
-      const c = document.createElement('canvas');
-      c.width = sw; c.height = sh;
-      c.getContext('2d').drawImage(bmp, 0, where === 'above' ? H - h : 0, W, h, 0, 0, sw, sh);
-      return c.toDataURL('image/jpeg', 0.7).split(',')[1];
+      const h = Math.min(bmp.height, Math.round(bmp.width * 0.6));
+      return { bmp, sy: where === 'above' ? bmp.height - h : 0, h };
     };
-    const out = {};
+    const parts = [];
     for (const where of ['above', 'below']) {
-      try { out[where] = await strip(neighbor(el, where), where); } catch (_) { /* no context then */ }
+      try { const p = await part(neighbor(el, where), where); if (p) parts.push({ where, ...p }); } catch (_) { /* no context then */ }
     }
-    return out;
+    if (!parts.length) return {};
+    // One small picture: what's above on top, what's below at the bottom, a grey line between.
+    const sw = 320;
+    const heights = parts.map((p) => Math.round((p.h / p.bmp.width) * sw));
+    const c = document.createElement('canvas');
+    c.width = sw; c.height = heights.reduce((x, y) => x + y, 0) + (parts.length - 1) * 6;
+    const g = c.getContext('2d');
+    g.fillStyle = '#888'; g.fillRect(0, 0, c.width, c.height);
+    let y = 0;
+    parts.forEach((p, i) => { g.drawImage(p.bmp, 0, p.sy, p.bmp.width, p.h, 0, y, sw, heights[i]); y += heights[i] + 6; });
+    return { around: { data: c.toDataURL('image/jpeg', 0.7).split(',')[1], where: parts.map((p) => p.where) } };
   }
 
   // The last few lines of the picture right above (when it's already translated), so a reply at
@@ -1473,8 +1493,7 @@
   async function translateBitmap(bitmap, apiKey, context = '', around = {}, pre = null) {
     const { pieces, sentW, sentH, pieceH, crop } = pre?.sliced || slice(bitmap);
     if (context) pieces[0].context = context;
-    if (around.above) (pieces[0].ctx ||= []).push({ where: 'above', data: around.above });
-    if (around.below) (pieces[pieces.length - 1].ctx ||= []).push({ where: 'below', data: around.below });
+    if (around.around) (pieces.length === 1 ? pieces[0] : around.around.where[0] === 'above' ? pieces[0] : pieces[pieces.length - 1]).ctx = [around.around];
     const out = [];
     const results = pre?.results || await Promise.all(pieces.map((piece) => translatePiece(piece, apiKey)));
     // A piece the safety filter refused: often only one part of the drawing sets it off. Try its
