@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.36.1
+// @version      1.37.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -81,9 +81,9 @@
   const KEY_SOFTEN = 'softenSwears';
   let softenSwears = !!(await store.get(KEY_SOFTEN, false)); // ⚙ → 6
   // Economy mode (⚙ → 7): less "thinking" and smaller pictures, roughly half the cost.
-  // Translate only the pictures you tap (default), or every picture automatically.
+  // Translate every picture automatically (default), or only the pictures you tap (⚙ → 14).
   const KEY_TAP = 'tapMode';
-  let tapMode = (await store.get(KEY_TAP, 'tap')) !== 'auto';
+  let tapMode = (await store.get(KEY_TAP, 'auto')) === 'tap';
   const requested = new WeakSet(); // pictures you asked to translate
   const KEY_ECONOMY = 'economy';
   let economy = !!(await store.get(KEY_ECONOMY, false));
