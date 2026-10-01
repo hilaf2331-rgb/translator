@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.36.0
+// @version      1.36.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1667,8 +1667,8 @@
       redrawPair(sm);
       return;
     }
-    // In tap mode, only join two pictures you translated.
-    if (tapMode && !(cache[keyOf(sm.a)] && cache[keyOf(sm.b)])) return;
+    // (In tap mode this also runs when only one of the two was tapped: a bubble cut by the edge of
+    // the picture you asked for is translated whole, from both pictures, in one request.)
     // Seams cost a request too: same rules as pictures (only while reading, within the daily limit).
     countUsage({});
     if (!reading() || usage.dayPics >= usage.dayAllowed) { waitingSeams.add(sm); return; } // retried when you read on
@@ -2333,7 +2333,14 @@
       return;
     }
     if (layers.has(el)) drawBubbles(el, []); // clear the previous page's bubbles
-    if (tapMode && !requested.has(el)) { showTap(el); return; }
+    if (tapMode && !requested.has(el)) {
+      showTap(el);
+      // A translated picture right above with a bubble cut at its bottom: now that this one has
+      // loaded, join the two so that bubble is translated whole.
+      const up = neighbor(el, 'above');
+      if (up?._ctBubbles?.some((b) => b.e?.includes('b'))) drawBubbles(up, up._ctBubbles);
+      return;
+    }
     hideTap(el);
     setStatus(el, 'ממתין לתרגום…');
     if (!queue.some((q) => q.el === el)) { queue.push({ el, key }); lastQueued = Date.now(); }
