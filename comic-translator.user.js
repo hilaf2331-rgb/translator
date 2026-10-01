@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.32.0
+// @version      1.33.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -45,8 +45,8 @@
   const MAX_EDGE = 1568;            // long edge of each piece sent to the model (px)
   const CHUNK_OVERLAP = 0.35;       // overlap between pieces of a tall webtoon strip (share of a piece's height),
                                     // so every bubble is whole in at least one piece
-  const MAX_PARALLEL = 10;           // images translated at the same time
-  const LOOK_AHEAD = '800%';        // start translating this far (in screens) before you get there
+  const MAX_PARALLEL = 3;            // requests at the same time (fewer = more pictures grouped per request)
+  const LOOK_AHEAD = '300%';        // start translating this far (in screens) before you get there
   const CACHE_LIMIT = 2000;         // translated images remembered across visits
   const DAILY_PICS = 300;           // pictures a day before asking whether to go on (cost guard)
   const IDLE_MS = 3 * 60 * 1000;    // stop translating after 3 minutes without scrolling or touching
@@ -1585,8 +1585,9 @@
     const apiKey = await store.get(KEY_API, '');
     const [A, B] = await Promise.all([loadBitmap(sm.a), loadBitmap(sm.b)]);
     const W = A.width, bScale = W / B.width;
-    const partA = Math.min(A.height, Math.max(Math.round(A.height * 0.5), 900));
-    const partBsrc = Math.min(B.height, Math.max(Math.round(B.height * 0.5), 900));
+    // At most ~760 px from each side, so the stitched strip fits in one request.
+    const partA = Math.min(A.height, 760);
+    const partBsrc = Math.min(B.height, Math.round(760 * B.width / W));
     const partB = Math.round(partBsrc * bScale);
     const total = partA + partB;
     const canvas = document.createElement('canvas');
@@ -2199,7 +2200,7 @@
     }
     if (layers.has(el)) drawBubbles(el, []); // clear the previous page's bubbles
     setStatus(el, 'ממתין לתרגום…');
-    if (!queue.some((q) => q.el === el)) queue.push({ el, key });
+    if (!queue.some((q) => q.el === el)) { queue.push({ el, key }); lastQueued = Date.now(); }
     else queue.find((q) => q.el === el).key = key;
     pump();
   }
@@ -2282,8 +2283,16 @@
       });
   }
 
+  let lastQueued = 0, pumpTimer = 0;
   async function pump() {
     if (!reading()) return;
+    // Pictures arrive one by one as the site loads them. Unless nothing is being translated yet,
+    // wait a moment for a few to gather, so they can share one request.
+    if (running > 0 && queue.length < BATCH_MAX && Date.now() - lastQueued < 1500) {
+      clearTimeout(pumpTimer);
+      pumpTimer = setTimeout(pump, 600);
+      return;
+    }
     for (const sm of [...waitingSeams]) scheduleSeam(sm);
     // On a site with no names learned yet, let the first picture finish alone, so the names it
     // learns are used by all the others (the same spelling for a character from the start).
@@ -2303,15 +2312,21 @@
       if (!admit(el, key)) continue;
       // Neighbours right below that are waiting too go along in the same request.
       const group = [{ el, key }];
-      for (let cur = el; group.length < BATCH_MAX; ) {
-        const nb = neighbor(cur, 'below');
-        const qi = nb ? queue.findIndex((q) => q.el === nb) : -1;
+      let prev = el.getBoundingClientRect();
+      while (group.length < BATCH_MAX) {
+        // the waiting picture that starts closest below the last one, in the same column
+        let qi = -1, top = Infinity;
+        queue.forEach((q, i) => {
+          const r = q.el.getBoundingClientRect();
+          const overlap = Math.min(r.right, prev.right) - Math.max(r.left, prev.left);
+          if (r.top >= prev.top + prev.height * 0.5 && r.top - prev.bottom < 80 && overlap > 0.6 * Math.min(r.width, prev.width) && r.top < top) { qi = i; top = r.top; }
+        });
         if (qi < 0) break;
         const mate = queue[qi];
-        if (state.get(nb)?.key !== mate.key || !admit(nb, mate.key)) break;
+        if (state.get(mate.el)?.key !== mate.key || !admit(mate.el, mate.key)) break;
         queue.splice(qi, 1);
         group.push(mate);
-        cur = nb;
+        prev = mate.el.getBoundingClientRect();
       }
       running++;
       const done = translateGroup(group.map((g) => g.el)).map((pr, n) => finish(group[n].el, group[n].key, pr));
