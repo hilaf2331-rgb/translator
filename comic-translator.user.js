@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.35.0
+// @version      1.35.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -987,7 +987,10 @@
           continue;
         }
         console.warn('[comic-translator] rules cache', err);
-        rulesCache = { off: now + (err.slow ? 10 * 60 : 3600) * 1000, why: String(err.message).slice(0, 120) };
+        // A network hiccup or a busy server is temporary: try again in two minutes. Only a real
+        // refusal (this model can't cache) waits an hour.
+        const passing = err.slow || !err.status || err.status >= 500 || err.status === 429 || /network|timeout/i.test(err.message);
+        rulesCache = { off: now + (passing ? 2 * 60 : 3600) * 1000, why: String(err.message).slice(0, 120) };
         store.set(KEY_RULES_CACHE, JSON.stringify(rulesCache));
         return null;
       }
