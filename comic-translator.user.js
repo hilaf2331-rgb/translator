@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.34.0
+// @version      1.34.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -957,11 +957,16 @@
     let text = rules;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await callApi('https://generativelanguage.googleapis.com/v1beta/cachedContents', { 'x-goog-api-key': apiKey }, {
-          model: `models/${model}`,
-          systemInstruction: { parts: [{ text }] },
-          ttl: '3600s',
-        });
+        const res = await Promise.race([
+          callApi('https://generativelanguage.googleapis.com/v1beta/cachedContents', { 'x-goog-api-key': apiKey }, {
+            model: `models/${model}`,
+            systemInstruction: { parts: [{ text }] },
+            ttl: '3600s',
+          }),
+          // never hold up the translation for long: without an answer, go on without the cache
+          new Promise((_, no) => setTimeout(() => no(Object.assign(new Error('cache: no answer'), { slow: true })), 8000)),
+        ]);
+        if (!res?.name) throw new Error('cache: no name');
         rulesCache = { sig, name: res.name, until: now + 3500 * 1000 };
         store.set(KEY_RULES_CACHE, JSON.stringify(rulesCache));
         return res.name;
@@ -971,7 +976,7 @@
           continue;
         }
         console.warn('[comic-translator] rules cache', err);
-        rulesCache = { off: now + 3600 * 1000, why: String(err.message).slice(0, 120) };
+        rulesCache = { off: now + (err.slow ? 10 * 60 : 3600) * 1000, why: String(err.message).slice(0, 120) };
         store.set(KEY_RULES_CACHE, JSON.stringify(rulesCache));
         return null;
       }
