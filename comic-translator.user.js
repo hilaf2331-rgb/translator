@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.35.1
+// @version      1.36.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -81,6 +81,10 @@
   const KEY_SOFTEN = 'softenSwears';
   let softenSwears = !!(await store.get(KEY_SOFTEN, false)); // ⚙ → 6
   // Economy mode (⚙ → 7): less "thinking" and smaller pictures, roughly half the cost.
+  // Translate only the pictures you tap (default), or every picture automatically.
+  const KEY_TAP = 'tapMode';
+  let tapMode = (await store.get(KEY_TAP, 'tap')) !== 'auto';
+  const requested = new WeakSet(); // pictures you asked to translate
   const KEY_ECONOMY = 'economy';
   let economy = !!(await store.get(KEY_ECONOMY, false));
   const KEY_SOURCE = 'sourceLang';
@@ -170,6 +174,12 @@
       position: absolute; pointer-events: none; top: 6px; left: 6px; max-width: 90%;
       background: rgba(0,0,0,.65); color: #fff; font: 12px -apple-system, Arial, sans-serif;
       padding: 3px 8px; border-radius: 10px; direction: rtl;
+    }
+    .ct-tap {
+      position: absolute; pointer-events: auto; right: 8px; width: 38px; height: 38px; border-radius: 19px;
+      border: 2px solid #fff; background: rgba(124,58,237,.85); color: #fff; margin: 0; padding: 0;
+      font: bold 17px -apple-system, Arial, sans-serif; box-shadow: 0 1px 6px rgba(0,0,0,.35); z-index: 3;
+      display: flex; align-items: center; justify-content: center; cursor: pointer;
     }
     #ct-ui {
       position: fixed; bottom: 18px; left: 14px; z-index: 2147483647;
@@ -349,7 +359,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)\n14 – מה לתרגם: ${tapMode ? 'רק תמונות שנוגעים בכפתור א' : 'כל תמונה אוטומטית'} (החלפה)`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -368,6 +378,14 @@
           await store.set(KEY_NOTES, storyNotes);
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
         }
+      }
+      else if (choice === '14') {
+        tapMode = !tapMode;
+        await store.set(KEY_TAP, tapMode ? 'tap' : 'auto');
+        alert(tapMode
+          ? 'מעכשיו מתרגמים רק תמונות שנוגעים בהן: על כל תמונה יש כפתור סגול "א". תמונות שכבר תורגמו מופיעות לבד, בחינם.'
+          : 'מעכשיו כל תמונה מתורגמת אוטומטית כשמגיעים אליה (עולה יותר).');
+        nearView.forEach((el) => { hideTap(el); state.delete(el); check(el); });
       }
       else if (choice === '13') {
         const u = usage.month === thisMonth() ? usage : { pics: 0, calls: 0, inTok: 0, outTok: 0, since: '' };
@@ -1649,6 +1667,8 @@
       redrawPair(sm);
       return;
     }
+    // In tap mode, only join two pictures you translated.
+    if (tapMode && !(cache[keyOf(sm.a)] && cache[keyOf(sm.b)])) return;
     // Seams cost a request too: same rules as pictures (only while reading, within the daily limit).
     countUsage({});
     if (!reading() || usage.dayPics >= usage.dayAllowed) { waitingSeams.add(sm); return; } // retried when you read on
@@ -2261,6 +2281,33 @@
 
   // Looks at an element and translates it if it now shows a new comic picture.
   // Readers that flip pages by swapping the picture in the same element are handled here.
+  // A small "translate" button on a picture (tap mode). Tall pictures get one every ~1200 px so
+  // there's always one in sight. Tapping translates the whole picture.
+  function showTap(el) {
+    const { layer } = layerFor(el);
+    if (layer.querySelector('.ct-tap')) return;
+    const h = el.getBoundingClientRect().height || 0;
+    const n = Math.max(1, Math.min(12, Math.ceil(h / 1200)));
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement('button');
+      b.className = 'ct-tap';
+      b.textContent = 'א';
+      b.title = 'לתרגם את התמונה הזו';
+      b.style.top = `calc(${(i / n) * 100}% + 8px)`;
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        lastActive = Date.now();
+        requested.add(el);
+        state.delete(el);
+        check(el);
+      }, true);
+      layer.appendChild(b);
+    }
+  }
+  function hideTap(el) {
+    layers.get(el)?.layer.querySelectorAll('.ct-tap').forEach((b) => b.remove());
+  }
+
   function check(el, retryErrors) {
     if (!enabled || !isComic(el)) return;
     const key = keyOf(el);
@@ -2286,6 +2333,8 @@
       return;
     }
     if (layers.has(el)) drawBubbles(el, []); // clear the previous page's bubbles
+    if (tapMode && !requested.has(el)) { showTap(el); return; }
+    hideTap(el);
     setStatus(el, 'ממתין לתרגום…');
     if (!queue.some((q) => q.el === el)) { queue.push({ el, key }); lastQueued = Date.now(); }
     else queue.find((q) => q.el === el).key = key;
