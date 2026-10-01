@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.30.0
+// @version      1.30.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1472,6 +1472,7 @@
     for (const el of [sm.a, sm.b]) if (el._ctBubbles && layers.has(el)) drawBubbles(el, el._ctBubbles);
   }
 
+  const waitingSeams = new Set();
   function scheduleSeam(sm) {
     if (sm.state) return;
     const hit = cache['seam:' + sm.key];
@@ -1481,6 +1482,11 @@
       redrawPair(sm);
       return;
     }
+    // Seams cost a request too: same rules as pictures (only while reading, within the daily limit).
+    countUsage({});
+    if (!reading() || usage.dayPics >= usage.dayAllowed) { waitingSeams.add(sm); return; } // retried when you read on
+    waitingSeams.delete(sm);
+    usage.dayPics++;
     sm.state = 'pending';
     translateSeam(sm)
       .then((res) => {
@@ -2145,6 +2151,7 @@
 
   async function pump() {
     if (!reading()) return;
+    for (const sm of [...waitingSeams]) scheduleSeam(sm);
     // On a site with no names learned yet, let the first picture finish alone, so the names it
     // learns are used by all the others (the same spelling for a character from the start).
     const limit = slowDown ? 2 : (Object.keys(glossary).length || firstDone ? MAX_PARALLEL : 1);
