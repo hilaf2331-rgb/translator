@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.37.0
+// @version      1.38.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -104,12 +104,23 @@
   const pad2 = (n) => String(n).padStart(2, '0');
   const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; };
   let usage = JSON.parse(await store.get(KEY_USAGE, '{}'));
-  function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0, cachedTok = 0 }) {
+  // A monthly budget kept by the translator itself (⚙ → 15), on top of Google's spend cap, so
+  // nobody can spend more than they meant to even if they skipped that step. The cost is an
+  // estimate from what Google reports for each request, on the high side; it stops a bit early.
+  const KEY_BUDGET = 'monthlyBudget';
+  let budget = Number(await store.get(KEY_BUDGET, 0)) || 0; // ₪ a month; 0 = not chosen yet
+  const DEFAULT_BUDGET = 20;
+  const RATE = { in: 2.2, cached: 0.6, out: 10 }; // ₪ per million tokens (measured, rounded up)
+  const STOP_AT = 0.9; // stop at 90% of the budget: the estimate isn't exact
+  const budgetLeft = () => (budget || DEFAULT_BUDGET) * STOP_AT - (usage.month === thisMonth() ? usage.cost || 0 : 0);
+  function countUsage({ pics = 0, calls = 0, inTok = 0, outTok = 0, cachedTok = 0, mult = 1 }) {
     if (usage.month !== thisMonth()) usage = { month: thisMonth(), since: `${new Date().getDate()}/${new Date().getMonth() + 1}`, pics: 0, calls: 0, inTok: 0, outTok: 0 };
     const today = new Date().toDateString();
     if (usage.day !== today) { usage.day = today; usage.dayPics = 0; usage.dayAllowed = DAILY_PICS; }
     usage.pics += pics; usage.calls += calls; usage.inTok += inTok || 0; usage.outTok += outTok || 0;
     usage.cachedTok = (usage.cachedTok || 0) + (cachedTok || 0);
+    const full = Math.max(0, (inTok || 0) - (cachedTok || 0));
+    usage.cost = (usage.cost || 0) + mult * (full * RATE.in + (cachedTok || 0) * RATE.cached + (outTok || 0) * RATE.out) / 1e6;
     store.set(KEY_USAGE, JSON.stringify(usage));
   }
   // Honorifics aren't names: their spelling is fixed in the prompt, and a wrong one saved here
@@ -359,7 +370,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)\n14 – מה לתרגם: ${tapMode ? 'רק תמונות שנוגעים בכפתור א' : 'כל תמונה אוטומטית'} (החלפה)`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)\n14 – מה לתרגם: ${tapMode ? 'רק תמונות שנוגעים בכפתור א' : 'כל תמונה אוטומטית'} (החלפה)\n15 – תקציב חודשי: ₪${budget || DEFAULT_BUDGET} (הוצאו בערך ₪${(usage.month === thisMonth() ? usage.cost || 0 : 0).toFixed(2)})`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -379,6 +390,11 @@
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
         }
       }
+      else if (choice === '15') {
+        await askBudget(false);
+        budgetWarned = false;
+        if (budgetLeft() > 0) nearView.forEach((el) => { state.delete(el); check(el); });
+      }
       else if (choice === '14') {
         tapMode = !tapMode;
         await store.set(KEY_TAP, tapMode ? 'tap' : 'auto');
@@ -392,7 +408,8 @@
         const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + ' מיליון' : n >= 1e4 ? Math.round(n / 1000) + ' אלף' : (n / 1000).toFixed(1) + ' אלף');
         alert(`שימוש החודש${u.since ? ` (מאז ${u.since})` : ''}:\n` +
           `• ${u.pics} תמונות תורגמו (היום: ${usage.day === new Date().toDateString() ? usage.dayPics : 0})\n• ${u.calls} בקשות ל-Google\n` +
-          `• ${k(u.inTok)} טוקנים נשלחו (מהם ${k(u.cachedTok || 0)} מהמטמון, בהנחה), ${k(u.outTok)} חזרו\n\n` +
+          `• ${k(u.inTok)} טוקנים נשלחו (מהם ${k(u.cachedTok || 0)} מהמטמון, בהנחה), ${k(u.outTok)} חזרו\n` +
+          `• הוצאה משוערת: ₪${(u.cost || 0).toFixed(2)} מתוך תקציב של ₪${budget || DEFAULT_BUDGET} (⚙ ← 15)\n\n` +
           `המחיר המדויק מופיע ב-Google (AI Studio ← Spend). כדי לדעת מחיר לפרק: הסכום שם חלקי מספר הפרקים שקראת.\n` +
           `(נספר רק במכשיר הזה, ומתאפס בתחילת כל חודש.)\n\nאחרי ${DAILY_PICS} תמונות ביום המתרגם שואל אם להמשיך.` +
           `\nמטמון ההוראות: ${rulesCache.name && rulesCache.until > Date.now() ? 'פועל ✓' : rulesCache.why ? 'לא זמין (' + rulesCache.why + ')' : 'עוד לא נוצר'}`);
@@ -536,10 +553,26 @@
       return false;
     }
     await store.set(KEY_API, key.trim());
+    if (!budget) await askBudget(true);
     // A new key starts with a clean slate on Google's quotas.
     try { exhausted = {}; } catch (_) { /* not set up yet */ }
     store.set('quotaExhausted', '{}');
     return true;
+  }
+
+  async function askBudget(first) {
+    const cur = budget || DEFAULT_BUDGET;
+    const txt = prompt(
+      (first ? 'עוד שאלה אחת: ' : '') +
+      'כמה מותר למתרגם להוציא בחודש, בשקלים?\n' +
+      'פרק שלם עולה בערך 70 אגורות, אז ₪20 זה בערך 25 פרקים.\n' +
+      'כשמגיעים לסכום, המתרגם עוצר עד תחילת החודש הבא (אפשר לשנות מתי שרוצים: ⚙ ← 15).',
+      String(cur));
+    if (txt === null) { if (!budget) { budget = DEFAULT_BUDGET; await store.set(KEY_BUDGET, budget); } return; }
+    const n = Math.round(Number(String(txt).replace(/[^\d.]/g, '')));
+    budget = n > 0 ? n : DEFAULT_BUDGET;
+    await store.set(KEY_BUDGET, budget);
+    if (!first) alert(`נשמר ✓ תקציב חודשי: ₪${budget}.`);
   }
 
   // ---------- Comic elements: <img>, <canvas>, or a CSS background image ----------
@@ -1333,7 +1366,7 @@
         }],
       }
     );
-    countUsage({ calls: 1, inTok: (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0), outTok: res.usage?.output_tokens, cachedTok: res.usage?.cache_read_input_tokens });
+    countUsage({ calls: 1, inTok: (res.usage?.input_tokens || 0) + (res.usage?.cache_read_input_tokens || 0) + (res.usage?.cache_creation_input_tokens || 0), outTok: res.usage?.output_tokens, cachedTok: res.usage?.cache_read_input_tokens, mult: 4 });
     if (res.stop_reason === 'refusal') { piece.blocked = 'refusal'; return []; }
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const parsed = JSON.parse(text);
@@ -1671,6 +1704,7 @@
     // the picture you asked for is translated whole, from both pictures, in one request.)
     // Seams cost a request too: same rules as pictures (only while reading, within the daily limit).
     countUsage({});
+    if (budgetLeft() <= 0) return;
     if (!reading() || usage.dayPics >= usage.dayAllowed) { waitingSeams.add(sm); return; } // retried when you read on
     waitingSeams.delete(sm);
     usage.dayPics++;
@@ -2374,7 +2408,19 @@
   }
 
   // Whether a picture may be translated now (cost guards); counts it for today if so.
+  let budgetWarned = false;
+  function overBudget() {
+    countUsage({});
+    if (budgetLeft() > 0) return false;
+    if (!budgetWarned) {
+      budgetWarned = true;
+      alert(`המתרגם עצר: הגעת לתקציב החודשי שבחרת (₪${budget || DEFAULT_BUDGET}, לפי הערכה).\n` +
+        'תמונות שכבר תורגמו ממשיכות להופיע. אפשר להגדיל את התקציב ב-⚙ ← 15, או לחכות לתחילת החודש.');
+    }
+    return true;
+  }
   function admit(el, key) {
+    if (!cache[key] && overBudget()) { setStatus(el, 'עצרתי: הגעת לתקציב החודשי (⚙ ← 15)'); return false; }
     if (!cache[key] && churning(el)) { setStatus(el, 'לא מתרגם: התמונה כאן מתחלפת כל הזמן'); return false; }
     // Cost guard: after a day's worth of pictures, ask before going on.
     countUsage({});
