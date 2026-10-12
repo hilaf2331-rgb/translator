@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.38.0
+// @version      1.38.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -837,6 +837,9 @@
       `For body and sex-related words use the everyday words people actually say, not clinical terms. ` +
       `Don't write English words in Hebrew letters when Israelis have an everyday Hebrew word for it ` +
       `("workaholic" is "מכור לעבודה", not "וורקהוליק"; "crush" can stay "קראש" because people say it). ` +
+      `Without nikud some Hebrew words read as something else; when the right meaning isn't obvious from the line, ` +
+      `add a word or pick another phrasing ("You're the guarantor" is "אתה הערב על ההלוואה" or "אתה זה שחתם כערב", ` +
+      `not just "אתה הערב", which reads like "the evening"). ` +
       `Use only real, everyday ${TARGET_LANG} words: never invent a word or a verb form. If you're not sure a form ` +
       `exists, say it more simply (e.g. "bathe in the sun" is "להשתזף" or "לשבת קצת בשמש"). ` +
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
@@ -1806,10 +1809,16 @@
           for (let i = 0; i < N; i++) ink[i] = diff[i] > T ? 1 : 0;
           // Ink connected to the edge of the area = outline / artwork: keep it. Unless most of it is
           // inside the text box, then it's letters that happen to touch something.
+          // The outline is followed at a lower threshold than the letters: a thin, soft grey outline
+          // is lighter than the letters in places, and at the letters' threshold it falls apart into
+          // bits that don't reach the edge and would be erased as if they were letters.
+          const lineT = Math.max(90, T * 0.55);
+          const line = new Uint8Array(N);
+          for (let i = 0; i < N; i++) line[i] = diff[i] > lineT ? 1 : 0;
           const keep = new Uint8Array(N), seen = new Uint8Array(N);
           for (let s = 0; s < N; s++) {
             const x = s % w, y = (s - x) / w;
-            if (!ink[s] || seen[s] || (x > 0 && x < w - 1 && y > 0 && y < h - 1)) continue;
+            if (!line[s] || seen[s] || (x > 0 && x < w - 1 && y > 0 && y < h - 1)) continue;
             const comp = [s], stack = [s];
             seen[s] = 1;
             let inside = 0;
@@ -1821,7 +1830,7 @@
               if (xx < w - 1) next.push(i + 1);
               if (i >= w) next.push(i - w);
               if (i < N - w) next.push(i + w);
-              for (const j of next) if (ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); comp.push(j); }
+              for (const j of next) if (line[j] && !seen[j]) { seen[j] = 1; stack.push(j); comp.push(j); }
             }
             if (inside < comp.length * 0.7) for (const i of comp) keep[i] = 1;
           }
