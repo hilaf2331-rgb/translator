@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.38.1
+// @version      1.39.0
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1239,9 +1239,31 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function quotaKind(err) {
-    if (err.status !== 429) return null;
     const text = (err.raw || '') + ' ' + err.message;
+    // Google stopped the key for money: the monthly spend cap in AI Studio, or the prepaid
+    // credit ran out. Waiting a minute won't help, so don't retry.
+    if ([402, 403, 429].includes(err.status) && /spend(ing)?[ _-]?(cap|limit)|ai\.studio\/spend|credit|prepa(y|id)/i.test(text)) {
+      return /credit|prepa(y|id)/i.test(text) ? 'credit' : 'cap';
+    }
+    if (err.status !== 429) return null;
     return /PerDay|per day|daily/i.test(text) ? 'day' : 'minute';
+  }
+  const MONEY_MSG = {
+    cap: 'Google עצרה את התרגום: הגעת לתקרת ההוצאה החודשית (Spend cap) שהגדרת ב-AI Studio. ' +
+      'אפשר להעלות את התקרה ב-aistudio.google.com ← Spend, או לחכות ל-1 בחודש.',
+    credit: 'Google עצרה את התרגום: נגמר הקרדיט בחשבון. ' +
+      'אפשר להוסיף קרדיט ב-aistudio.google.com ← Billing.',
+  };
+  // After Google refuses for money, don't send every picture just to be refused again: wait
+  // five minutes (enough time to raise the cap or add credit) before trying once more.
+  let moneyStop = null, moneyWarned = false;
+  function moneyError(kind) {
+    moneyStop = { kind, until: Date.now() + 5 * 60 * 1000 };
+    if (!moneyWarned) {
+      moneyWarned = true;
+      alert(MONEY_MSG[kind] + '\nתמונות שכבר תורגמו ממשיכות להופיע.');
+    }
+    return new Error(MONEY_MSG[kind]);
   }
   function retryDelayMs(err) {
     const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(err.raw || '') || /retry in (\d+(?:\.\d+)?)s/i.exec(err.message);
@@ -1254,12 +1276,14 @@
     const QUOTA_MSG = 'הגעת למכסה היומית של Google. אם אין כרטיס אשראי מחובר, מחברים ב-AI Studio; אחרת היא מתחדשת מחר.';
     const models = [GEMINI_MODEL].filter((m) => exhausted[m] !== today());
     if (!models.length) throw new Error(QUOTA_MSG);
+    if (moneyStop && Date.now() < moneyStop.until) throw new Error(MONEY_MSG[moneyStop.kind]);
     for (const model of models) {
       for (let attempt = 0; ; attempt++) {
         try {
           return await geminiRequest(piece, apiKey, part, model);
         } catch (err) {
           const kind = quotaKind(err);
+          if (kind === 'cap' || kind === 'credit') throw moneyError(kind);
           if (kind === 'day') {
             exhausted[model] = today();
             store.set(KEY_EXHAUSTED, JSON.stringify(exhausted));
