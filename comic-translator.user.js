@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.0
+// @version      1.40.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1055,7 +1055,10 @@
     const crop = (y, h) => {
       const canvas = document.createElement('canvas');
       canvas.width = sw; canvas.height = h;
-      canvas.getContext('2d').drawImage(bitmap, 0, y / scale, W, h / scale, 0, 0, sw, h);
+      // Safari draws nothing at all (a black piece) if the area asked for reaches even half a
+      // pixel past the picture's edge, which rounding does for some picture sizes: stay inside.
+      const sy = Math.min(H, y / scale), sh = Math.min(h / scale, H - sy);
+      canvas.getContext('2d').drawImage(bitmap, 0, sy, W, sh, 0, 0, sw, sh * scale);
       const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
       return { y, h, w: sw, data, first: y === 0, last: y + h >= totalH, diag: bitmap._diag || '' };
     };
