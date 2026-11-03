@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.1
+// @version      1.40.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -741,192 +741,7 @@
     const url = `${proxy}/?url=${encodeURIComponent(src)}&ref=${encodeURIComponent(location.href)}`;
     const r = await fetch(url); // the helper allows cross-site reads
     if (!r.ok) throw new Error(`שרת העזר: ${r.status} ${(await r.text()).slice(0, 60)}`);
-    return await decodeBlob(await r.blob());
-  }
-
-  // Safari sometimes decodes a picture as all black (seen with some pictures served as files),
-  // while the same picture shows fine on the page. Such a picture must not be sent: Google would
-  // see only black. These check for it and decode the picture another way.
-  function looksBlank(bmp) {
-    try {
-      const c = document.createElement('canvas');
-      c.width = 24; c.height = 24;
-      const g = c.getContext('2d', { willReadFrequently: true });
-      g.drawImage(bmp, 0, 0, 24, 24);
-      const d = g.getImageData(0, 0, 24, 24).data;
-      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && (d[i] > 12 || d[i + 1] > 12 || d[i + 2] > 12)) return false;
-      return true;
-    } catch (_) { return false; }
-  }
-  // Draw through a canvas: a second, independent way to decode.
-  async function viaCanvas(source, w, h) {
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    c.getContext('2d').drawImage(source, 0, 0, w, h);
-    return createImageBitmap(c);
-  }
-  // What kind of file a picture is (for ⚙ → 16): type, size, and whether it's animated. An
-  // animated picture is drawn by Safari on the page at its current frame, but read by us at its
-  // first frame, which can be black (a panel that fades in).
-  let lastFileInfo = '';
-  async function fileInfo(blob) {
-    try {
-      const b = new Uint8Array(await blob.slice(0, Math.min(blob.size, 200000)).arrayBuffer());
-      const str = (i, n) => String.fromCharCode(...b.subarray(i, i + n));
-      let kind = str(0, 4) === 'RIFF' && str(8, 4) === 'WEBP' ? 'webp' : str(1, 3) === 'PNG' ? 'png' : str(0, 3) === 'GIF' ? 'gif'
-        : b[0] === 0xff && b[1] === 0xd8 ? 'jpeg' : str(4, 8).startsWith('ftyp') ? 'avif/heic:' + str(8, 4) : b[0] === 0xff && b[1] === 0x0a ? 'jxl' : '?';
-      const text = String.fromCharCode(...b.subarray(0, Math.min(b.length, 4096)));
-      const anim = (kind === 'webp' && text.includes('ANIM')) || (kind === 'png' && text.includes('acTL')) ? ' animated' : '';
-      return `file: ${blob.type || '-'} ${kind}${anim} ${Math.round(blob.size / 1024)}KB`;
-    } catch (_) { return ''; }
-  }
-  // The last frame of an animated picture. Safari only gives scripts the first frame, so take the
-  // file apart: each frame becomes a small still file of its own, which Safari can decode, and the
-  // frames are drawn one over the other the way the animation would (animated WebP and PNG).
-  const CRC_TABLE = (() => {
-    const t = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
-    return t;
-  })();
-  function pngChunk(type, data) {
-    const out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
-    dv.setUint32(0, data.length);
-    for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
-    out.set(data, 8);
-    let c = 0xffffffff;
-    for (let i = 4; i < 8 + data.length; i++) c = CRC_TABLE[(c ^ out[i]) & 0xff] ^ (c >>> 8);
-    dv.setUint32(8 + data.length, (c ^ 0xffffffff) >>> 0);
-    return out;
-  }
-  async function composeFrames(W, H, frames) {
-    const c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    const g = c.getContext('2d');
-    let prev = null;
-    for (const f of frames) {
-      if (prev?.dispose === 'bg') g.clearRect(prev.x, prev.y, prev.w, prev.h);
-      const saved = f.dispose === 'prev' ? g.getImageData(f.x, f.y, f.w, f.h) : null;
-      const bmp = await createImageBitmap(new Blob([f.file], { type: f.type }));
-      if (!f.blend) g.clearRect(f.x, f.y, f.w, f.h);
-      g.drawImage(bmp, f.x, f.y);
-      prev = f;
-      if (saved && f !== frames[frames.length - 1]) { g.putImageData(saved, f.x, f.y); prev = null; }
-    }
-    return createImageBitmap(c);
-  }
-  function webpFrames(b) {
-    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    const tag = (i) => String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]);
-    const u24 = (i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
-    let W = 0, H = 0;
-    const frames = [];
-    for (let i = 12; i + 8 <= b.length;) {
-      const id = tag(i), size = dv.getUint32(i + 4, true), body = i + 8;
-      if (id === 'VP8X') { W = u24(body + 4) + 1; H = u24(body + 7) + 1; }
-      if (id === 'ANMF') {
-        const fx = u24(body) * 2, fy = u24(body + 3) * 2, fw = u24(body + 6) + 1, fh = u24(body + 9) + 1, flags = b[body + 15];
-        // The frame's own chunks (optional ALPH, then VP8 or VP8L) make a still WebP.
-        const inner = b.subarray(body + 16, body + size);
-        const hasAlpha = tag(body + 16) === 'ALPH';
-        const head = [];
-        if (hasAlpha) {
-          const x = new Uint8Array(18);
-          x.set([86, 80, 56, 88, 10, 0, 0, 0, 0x10]);
-          const w1 = fw - 1, h1 = fh - 1;
-          x.set([w1 & 255, (w1 >> 8) & 255, (w1 >> 16) & 255, h1 & 255, (h1 >> 8) & 255, (h1 >> 16) & 255], 12);
-          head.push(x);
-        }
-        const len = 4 + head.reduce((n, x) => n + x.length, 0) + inner.length;
-        const riff = new Uint8Array(8 + len);
-        riff.set([82, 73, 70, 70]); new DataView(riff.buffer).setUint32(4, len, true);
-        riff.set([87, 69, 66, 80], 8);
-        let o = 12;
-        for (const x of head) { riff.set(x, o); o += x.length; }
-        riff.set(inner, o);
-        frames.push({ x: fx, y: fy, w: fw, h: fh, blend: !(flags & 2), dispose: flags & 1 ? 'bg' : 'none', file: riff, type: 'image/webp' });
-      }
-      i = body + size + (size & 1);
-    }
-    return frames.length > 1 ? { W, H, frames } : null;
-  }
-  function apngFrames(b) {
-    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    const tag = (i) => String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3]);
-    let ihdr = null, W = 0, H = 0, cur = null;
-    const extra = [], frames = [];
-    for (let i = 8; i + 12 <= b.length;) {
-      const len = dv.getUint32(i), id = tag(i + 4), data = b.subarray(i + 8, i + 8 + len);
-      if (id === 'IHDR') { ihdr = data; W = dv.getUint32(i + 8); H = dv.getUint32(i + 12); }
-      else if (id === 'PLTE' || id === 'tRNS' || id === 'gAMA' || id === 'iCCP' || id === 'sRGB' || id === 'cHRM') extra.push(pngChunk(id, data));
-      else if (id === 'fcTL') {
-        const d = new DataView(data.buffer, data.byteOffset);
-        cur = { w: d.getUint32(4), h: d.getUint32(8), x: d.getUint32(12), y: d.getUint32(16),
-          dispose: ['none', 'bg', 'prev'][data[24]] || 'none', blend: data[25] === 1, parts: [] };
-        frames.push(cur);
-      } else if (id === 'IDAT' && cur) cur.parts.push(data);
-      else if (id === 'fdAT' && cur) cur.parts.push(data.subarray(4));
-      i += 12 + len;
-    }
-    if (!ihdr || frames.length < 2) return null;
-    for (const f of frames) {
-      const h = new Uint8Array(ihdr);
-      const hv = new DataView(h.buffer);
-      hv.setUint32(0, f.w); hv.setUint32(4, f.h);
-      const chunks = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', h), ...extra,
-        ...f.parts.map((p) => pngChunk('IDAT', p)), pngChunk('IEND', new Uint8Array(0))];
-      const size = chunks.reduce((n, x) => n + x.length, 0);
-      f.file = new Uint8Array(size);
-      let o = 0;
-      for (const x of chunks) { f.file.set(x, o); o += x.length; }
-      f.type = 'image/png';
-    }
-    // The first frame (index 0 with "blend") of an APNG always replaces the area.
-    frames[0].blend = false;
-    return { W, H, frames };
-  }
-  async function lastFrame(blob) {
-    try {
-      const b = new Uint8Array(await blob.arrayBuffer());
-      const head = String.fromCharCode(...b.subarray(0, 12));
-      const anim = head.startsWith('RIFF') && head.endsWith('WEBP') ? webpFrames(b) : head.startsWith('\x89PNG') ? apngFrames(b) : null;
-      if (anim) return await composeFrames(anim.W, anim.H, anim.frames);
-    } catch (err) { lastFileInfo += ' (frames: ' + err.message + ')'; }
-    if (!('ImageDecoder' in window)) return null;
-    try {
-      const dec = new ImageDecoder({ data: await blob.arrayBuffer(), type: blob.type || 'image/webp' });
-      await dec.tracks.ready;
-      const n = dec.tracks.selectedTrack?.frameCount || 1;
-      const { image } = await dec.decode({ frameIndex: n - 1 });
-      const bmp = await createImageBitmap(image);
-      image.close?.(); dec.close?.();
-      return bmp;
-    } catch (_) { return null; }
-  }
-  async function decodeBlob(blob) {
-    const bmp = await createImageBitmap(blob);
-    if (!looksBlank(bmp)) return bmp;
-    lastFileInfo = await fileInfo(blob) + ('ImageDecoder' in window ? ' (decoder: yes)' : ' (decoder: no)');
-    const fr = await lastFrame(blob);
-    if (fr && !looksBlank(fr)) return fr;
-    const url = URL.createObjectURL(blob);
-    try {
-      const im = new Image();
-      im.src = url;
-      await im.decode();
-      const again = await viaCanvas(im, im.naturalWidth, im.naturalHeight);
-      return looksBlank(again) ? bmp : again;
-    } catch (_) {
-      return bmp;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-  async function decodeElement(el) {
-    try { await el.decode?.(); } catch (_) { /* draw what there is */ }
-    const bmp = await createImageBitmap(el);
-    if (!looksBlank(bmp)) return bmp;
-    const again = await viaCanvas(el, el.naturalWidth || el.width, el.naturalHeight || el.height);
-    return looksBlank(again) ? null : again;
+    return await createImageBitmap(await r.blob());
   }
 
   async function bitmapFromUrl(src) {
@@ -940,10 +755,7 @@
     // 1) Page fetch: works for same-site images, blob: URLs, and CDNs that allow it.
     try {
       const r = await fetch(src);
-      if (r.ok) {
-        const bmp = await decodeBlob(await r.blob());
-        if (!looksBlank(bmp)) return bmp;
-      }
+      if (r.ok) return await createImageBitmap(await r.blob());
     } catch (_) { /* fall through */ }
     // 2) A fresh copy of the picture asking the server for cross-site permission.
     try {
@@ -951,10 +763,7 @@
       probe.crossOrigin = 'anonymous';
       probe.src = src + (src.includes('?') ? '&' : '?') + 'ct=1';
       await probe.decode();
-      if (isReadable(probe)) {
-        const bmp = await createImageBitmap(probe);
-        if (!looksBlank(bmp)) return bmp;
-      }
+      if (isReadable(probe)) return await createImageBitmap(probe);
     } catch (_) { /* fall through */ }
     // 3) Userscript requests: not bound by the browser's cross-site rules. Image servers
     //    check different things, so try a few ways of asking.
@@ -971,9 +780,7 @@
         if (r.status < 200 || r.status >= 300) continue;
         let blob = r.response;
         if (!(blob instanceof Blob)) blob = new Blob([blob]);
-        const bmp = await decodeBlob(blob);
-        if (looksBlank(bmp) && headers !== attempts[attempts.length - 1]) continue;
-        return bmp;
+        return await createImageBitmap(blob);
       } catch (_) { /* try the next way */ }
     }
     // 4) The image helper server, if one is set up (⚙ → 4).
@@ -986,54 +793,22 @@
 
   // What we learned about a picture we read (kept on its bitmap), shown in ⚙ → 16.
   function describe(el) {
-    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
     const src = kindOf(el) === 'img' ? (el.currentSrc || el.src) : kindOf(el) === 'bg' ? bgUrl(el) : '';
     const { w, h } = naturalSize(el);
-    return `${el.tagName.toLowerCase()} ${w}x${h} shown ${Math.round(r.width)}x${Math.round(r.height)}` +
-      (src ? ` src=${src.slice(0, 90)}` : '') +
-      (cs.filter !== 'none' ? ` filter=${cs.filter}` : '') + (cs.mixBlendMode !== 'normal' ? ` blend=${cs.mixBlendMode}` : '') +
-      (cs.opacity !== '1' ? ` opacity=${cs.opacity}` : '') + (cs.backgroundImage !== 'none' ? ' +bg' : '');
-  }
-  // Other pictures drawn at the same spot (a site can show the real picture in one element and
-  // keep a dark copy or a placeholder in another).
-  function samePlace(el) {
-    const r = el.getBoundingClientRect();
-    const out = [];
-    for (const o of [...deepQuery(document, 'img, canvas'), el.parentElement, el.parentElement?.parentElement]) {
-      if (!o || o === el || o.closest?.('.ct-layer, #ct-ui')) continue;
-      if (!(o instanceof HTMLImageElement || o instanceof HTMLCanvasElement) && !bgUrl(o)) continue;
-      const q = o.getBoundingClientRect();
-      const ix = Math.min(r.right, q.right) - Math.max(r.left, q.left);
-      const iy = Math.min(r.bottom, q.bottom) - Math.max(r.top, q.top);
-      if (ix > 0.8 * r.width && iy > 0.8 * r.height && q.width < 1.25 * r.width && q.height < 1.25 * r.height) out.push(o);
-    }
-    return out;
+    return `${el.tagName.toLowerCase()} ${w}x${h} shown ${Math.round(r.width)}x${Math.round(r.height)}` + (src ? ` src=${src.slice(0, 90)}` : '');
   }
 
   async function loadBitmap(el) {
-    lastFileInfo = '';
     const bmp = await loadOwnBitmap(el);
-    if (!looksBlank(bmp)) { bmp._diag = describe(el) + (lastFileInfo ? '\n' + lastFileInfo : ''); return bmp; }
-    const notes = [describe(el) + ' → black'];
-    for (const o of samePlace(el)) {
-      try {
-        const alt = await loadOwnBitmap(o);
-        const ok = !looksBlank(alt) && Math.abs(alt.width / alt.height - bmp.width / bmp.height) < 0.1 * (bmp.width / bmp.height);
-        notes.push(describe(o) + (ok ? ' → used' : ' → no'));
-        if (ok) { alt._diag = notes.join('\n'); return alt; }
-      } catch (err) { notes.push(describe(o) + ' → ' + err.message); }
-    }
-    bmp._diag = notes.join('\n') + (lastFileInfo ? '\n' + lastFileInfo : '');
+    bmp._diag = describe(el);
     return bmp;
   }
 
   async function loadOwnBitmap(el) {
     switch (kindOf(el)) {
       case 'img':
-        if (isReadable(el)) {
-          const bmp = await decodeElement(el);
-          if (bmp) return bmp;
-        }
+        if (isReadable(el)) return await createImageBitmap(el);
         return await bitmapFromUrl(el.currentSrc || el.src);
       case 'canvas':
         if (!isReadable(el)) throw new Error('האתר נועל את התמונה, אי אפשר לקרוא אותה');
@@ -1041,6 +816,19 @@
       default:
         return await bitmapFromUrl(bgUrl(el));
     }
+  }
+
+  // A piece that is all one color (a black or white gap between scenes) can't hold any text: it
+  // isn't sent at all. Every pixel is checked, so even a tiny "..." keeps the piece.
+  function flat(canvas) {
+    try {
+      const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      const r = d[0], g = d[1], b = d[2];
+      for (let i = 4; i < d.length; i += 4) {
+        if (Math.abs(d[i] - r) > 14 || Math.abs(d[i + 1] - g) > 14 || Math.abs(d[i + 2] - b) > 14) return false;
+      }
+      return true;
+    } catch (_) { return false; }
   }
 
   // Cut a (possibly very tall) image into pieces the model can read clearly.
@@ -1060,7 +848,7 @@
       const sy = Math.min(H, y / scale), sh = Math.min(h / scale, H - sy);
       canvas.getContext('2d').drawImage(bitmap, 0, sy, W, sh, 0, 0, sw, sh * scale);
       const data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
-      return { y, h, w: sw, data, first: y === 0, last: y + h >= totalH, diag: bitmap._diag || '' };
+      return { y, h, w: sw, data, blank: flat(canvas), first: y === 0, last: y + h >= totalH, diag: bitmap._diag || '' };
     };
     const pieces = [];
     let y = 0;
@@ -1712,6 +1500,7 @@
 
   // Bubbles in pixel coordinates of the piece.
   function translatePiece(piece, apiKey) {
+    if (piece.blank) return Promise.resolve([]);
     return providerOf(apiKey) === 'claude' ? claudePiece(piece, apiKey) : geminiPiece(piece, apiKey);
   }
 
@@ -1740,13 +1529,7 @@
     const seen = fp && !forced.has(el) && cached(fp);
     if (seen) return reuse(seen, bitmap);
     const around = forced.has(el) ? {} : await picturesAround(el);
-    let out = await translateBitmap(bitmap, apiKey, forced.has(el) ? '' : contextBefore(el), around);
-    // Nothing found although the neighbours' strip was sent along: the model sometimes takes the
-    // picture's own bubble for one in that strip (which it must skip). Look once more without it.
-    if (!out.length && !out.blocked && around.around) {
-      const again = await translateBitmap(bitmap, apiKey, contextBefore(el), {});
-      if (again.length || again.blocked) out = again;
-    }
+    const out = await translateBitmap(bitmap, apiKey, forced.has(el) ? '' : contextBefore(el), around);
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
     if (fp) keep(fp, out);
@@ -1773,7 +1556,7 @@
           const seen = fp && cached(fp);
           if (seen) return settle[i].res(reuse(seen, bitmap));
           const sliced = slice(bitmap);
-          if (sliced.pieces.length !== 1) return solo(i); // tall strips go on their own
+          if (sliced.pieces.length !== 1 || sliced.pieces[0].blank) return solo(i); // tall strips go on their own; flat ones aren't sent
           items.push({ i, bitmap, fp, sliced });
         } catch (_) { solo(i); }
       }));
