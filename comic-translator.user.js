@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.2
+// @version      1.39.3
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1137,7 +1137,13 @@
     const blockedBy = res.promptFeedback?.blockReason ||
       (['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY', 'RECITATION'].includes(cand?.finishReason) && cand.finishReason);
     if (blockedBy) { piece.blocked = blockedBy; return []; }
-    if (!cand?.content?.parts) return []; // empty
+    // No answer at all, or one stopped for another reason ("OTHER" and the like) with nothing in
+    // it: say so instead of quietly showing the picture untranslated.
+    if (!cand) throw new Error('Google החזירה תשובה ריקה. נסי שוב בעוד רגע');
+    if (!cand.content?.parts?.some((p) => p.text && !p.thought)) {
+      if (cand.finishReason && cand.finishReason !== 'STOP') { piece.blocked = cand.finishReason; return []; }
+      return [];
+    }
     const text = cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
     const parsed = JSON.parse(text);
     const nameFixes = learnNames(parsed.names);
@@ -2491,7 +2497,8 @@
         keep(key, bubbles);
         saveCache();
         if (!enabled || state.get(el)?.key !== key) return;
-        setStatus(el, bubbles.blocked || null);
+        // A picture you tapped that came back with nothing: say it was looked at.
+        setStatus(el, bubbles.blocked || (tapMode && requested.has(el) && !bubbles.length ? 'לא נמצא טקסט בתמונה הזו' : null));
         drawBubbles(el, bubbles);
       })
       .catch((err) => {
