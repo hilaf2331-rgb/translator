@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.6
+// @version      1.39.7
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -741,7 +741,52 @@
     const url = `${proxy}/?url=${encodeURIComponent(src)}&ref=${encodeURIComponent(location.href)}`;
     const r = await fetch(url); // the helper allows cross-site reads
     if (!r.ok) throw new Error(`שרת העזר: ${r.status} ${(await r.text()).slice(0, 60)}`);
-    return await createImageBitmap(await r.blob());
+    return await decodeBlob(await r.blob());
+  }
+
+  // Safari sometimes decodes a picture as all black (seen with some pictures served as files),
+  // while the same picture shows fine on the page. Such a picture must not be sent: Google would
+  // see only black. These check for it and decode the picture another way.
+  function looksBlank(bmp) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = 24; c.height = 24;
+      const g = c.getContext('2d', { willReadFrequently: true });
+      g.drawImage(bmp, 0, 0, 24, 24);
+      const d = g.getImageData(0, 0, 24, 24).data;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0 && (d[i] > 12 || d[i + 1] > 12 || d[i + 2] > 12)) return false;
+      return true;
+    } catch (_) { return false; }
+  }
+  // Draw through a canvas: a second, independent way to decode.
+  async function viaCanvas(source, w, h) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(source, 0, 0, w, h);
+    return createImageBitmap(c);
+  }
+  async function decodeBlob(blob) {
+    const bmp = await createImageBitmap(blob);
+    if (!looksBlank(bmp)) return bmp;
+    const url = URL.createObjectURL(blob);
+    try {
+      const im = new Image();
+      im.src = url;
+      await im.decode();
+      const again = await viaCanvas(im, im.naturalWidth, im.naturalHeight);
+      return looksBlank(again) ? bmp : again;
+    } catch (_) {
+      return bmp;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  async function decodeElement(el) {
+    try { await el.decode?.(); } catch (_) { /* draw what there is */ }
+    const bmp = await createImageBitmap(el);
+    if (!looksBlank(bmp)) return bmp;
+    const again = await viaCanvas(el, el.naturalWidth || el.width, el.naturalHeight || el.height);
+    return looksBlank(again) ? null : again;
   }
 
   async function bitmapFromUrl(src) {
@@ -755,7 +800,10 @@
     // 1) Page fetch: works for same-site images, blob: URLs, and CDNs that allow it.
     try {
       const r = await fetch(src);
-      if (r.ok) return await createImageBitmap(await r.blob());
+      if (r.ok) {
+        const bmp = await decodeBlob(await r.blob());
+        if (!looksBlank(bmp)) return bmp;
+      }
     } catch (_) { /* fall through */ }
     // 2) A fresh copy of the picture asking the server for cross-site permission.
     try {
@@ -780,7 +828,9 @@
         if (r.status < 200 || r.status >= 300) continue;
         let blob = r.response;
         if (!(blob instanceof Blob)) blob = new Blob([blob]);
-        return await createImageBitmap(blob);
+        const bmp = await decodeBlob(blob);
+        if (looksBlank(bmp) && headers !== attempts[attempts.length - 1]) continue;
+        return bmp;
       } catch (_) { /* try the next way */ }
     }
     // 4) The image helper server, if one is set up (⚙ → 4).
@@ -794,7 +844,10 @@
   async function loadBitmap(el) {
     switch (kindOf(el)) {
       case 'img':
-        if (isReadable(el)) return await createImageBitmap(el);
+        if (isReadable(el)) {
+          const bmp = await decodeElement(el);
+          if (bmp) return bmp;
+        }
         return await bitmapFromUrl(el.currentSrc || el.src);
       case 'canvas':
         if (!isReadable(el)) throw new Error('האתר נועל את התמונה, אי אפשר לקרוא אותה');
