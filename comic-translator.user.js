@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.1
+// @version      1.39.2
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -1729,7 +1729,7 @@
     if (sm.state) return;
     const hit = cached('seam:' + sm.key);
     if (hit) {
-      sm.state = 'done'; sm.fa = hit.fa; sm.fb = hit.fb;
+      sm.state = 'done'; sm.fa = hit.fa; sm.fb = hit.fb; sm.got = hit.b;
       drawBubbles(sm, hit.b);
       redrawPair(sm);
       return;
@@ -1746,7 +1746,7 @@
     translateSeam(sm)
       .then((res) => {
         keep('seam:' + sm.key, Object.assign(res.b, { blocked: res.blocked }), { fa: res.fa, fb: res.fb }); saveCache();
-        sm.state = 'done'; sm.fa = res.fa; sm.fb = res.fb;
+        sm.state = 'done'; sm.fa = res.fa; sm.fb = res.fb; sm.got = res.b;
         if (enabled) { drawBubbles(sm, res.b); redrawPair(sm); }
       })
       .catch((err) => {
@@ -2288,9 +2288,13 @@
       const above = hasTop && neighbor(el, 'above');
       const sBelow = below ? seamFor(el, below) : null;
       const sAbove = above ? seamFor(above, el) : null;
+      // A bubble on the cut is left to the joined translation, but only once that has really come
+      // back with a bubble at the same place. Until then (or if it missed it, or was refused),
+      // this picture's own part of the bubble is shown, so nothing stays in English.
+      const covered = (b, sm) => sm?.state === 'done' && sm.got.some((s) =>
+        Math.min(b.x + b.w, s.x + s.w) - Math.max(b.x, s.x) > 0.3 * Math.min(b.w, s.w));
       bubbles = bubbles.filter((b) =>
-        !((b.e?.includes('b') && sBelow && sBelow.state !== 'failed') ||
-          (b.e?.includes('t') && sAbove && sAbove.state !== 'failed')));
+        !((b.e?.includes('b') && covered(b, sBelow)) || (b.e?.includes('t') && covered(b, sAbove))));
       if (sBelow) scheduleSeam(sBelow);
       if (sAbove) scheduleSeam(sAbove);
     }
