@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.5
+// @version      1.39.6
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -390,7 +390,7 @@
     gearBtn.addEventListener('click', async () => {
       const version = (typeof GM.info === 'object' && GM.info?.script?.version) || '?';
       const choice = prompt(
-        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)\n14 – מה לתרגם: ${tapMode ? 'רק תמונות שנוגעים בכפתור א' : 'כל תמונה אוטומטית'} (החלפה)\n15 – תקציב חודשי: ₪${budget || DEFAULT_BUDGET} (הוצאו בערך ₪${(usage.month === thisMonth() ? usage.cost || 0 : 0).toFixed(2)})`,
+        `הגדרות (גרסה ${version}):\n1 – החלפת מפתח API\n2 – ניקוי תרגומים שמורים\n3 – הסתרת הכפתורים עד רענון הדף\n4 – כתובת שרת עזר לתמונות\n5 – בחירת פונט\n6 – קללות: ${softenSwears ? 'מעודנות' : 'כמו במקור'} (החלפה)\n7 – מצב חסכוני: ${economy ? 'פועל' : 'כבוי'} (החלפה)\n8 – שפת המקור: ${source.label}\n9 – הערות על הסיפור (מי בן ומי בת)${storyNotes ? ' ✓' : ''}\n10 – מסנן תוכן מיני: ${relaxedSexFilter ? 'מקל' : 'רגיל'} (החלפה)\n11 – שמות הדמויות (${Object.keys(glossary).length})\n12 – בדיקת עדכונים עכשיו\n13 – שימוש החודש (${usage.month === thisMonth() ? usage.pics : 0} תמונות)\n14 – מה לתרגם: ${tapMode ? 'רק תמונות שנוגעים בכפתור א' : 'כל תמונה אוטומטית'} (החלפה)\n15 – תקציב חודשי: ₪${budget || DEFAULT_BUDGET} (הוצאו בערך ₪${(usage.month === thisMonth() ? usage.cost || 0 : 0).toFixed(2)})\n16 – בדיקה: מה נשלח ל-Google לאחרונה`,
         '1'
       );
       if (choice === '1') askForKey();
@@ -410,6 +410,7 @@
           alert(storyNotes ? 'נשמר ✓ ההערות יחולו על תמונות חדשות.' : 'ההערות נמחקו.');
         }
       }
+      else if (choice === '16') showSent();
       else if (choice === '15') {
         await askBudget(false);
         budgetWarned = false;
@@ -1072,6 +1073,45 @@
     return null;
   }
 
+  // The last few requests (pictures sent and the raw answer), for ⚙ → 16: shows what Google
+  // actually saw and said when a bubble is missed. Kept in memory only, never saved or sent.
+  const lastSent = [];
+  function noteSent(piece, imagePart, res) {
+    const cand = res?.candidates?.[0];
+    lastSent.unshift({
+      at: new Date().toLocaleTimeString('he-IL'),
+      task: buildTask(piece).slice(0, 400),
+      imgs: [...(piece.batch ? piece.batch.map((p) => p.data) : [imagePart.inlineData?.data]), ...(piece.ctx || []).map((c) => c.data)].filter(Boolean),
+      reply: `finish: ${cand?.finishReason || '-'}${res?.promptFeedback?.blockReason ? ' / block: ' + res.promptFeedback.blockReason : ''}\n` +
+        (cand?.content?.parts || []).filter((p) => p.text && !p.thought).map((p) => p.text).join('').slice(0, 2500),
+    });
+    lastSent.length = Math.min(lastSent.length, 4);
+  }
+  function showSent() {
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#fff;color:#111;overflow:auto;padding:12px;font:13px/1.4 sans-serif;direction:ltr;text-align:left';
+    const close = document.createElement('button');
+    close.textContent = 'סגירה ✕';
+    close.style.cssText = 'position:sticky;top:0;float:right;font-size:16px;padding:6px 14px;border-radius:10px;border:0;background:#7b3fe4;color:#fff';
+    close.onclick = () => box.remove();
+    box.appendChild(close);
+    if (!lastSent.length) box.appendChild(Object.assign(document.createElement('p'), { textContent: 'עוד לא נשלח כלום מאז שהדף נפתח.' }));
+    for (const e of lastSent) {
+      const h = document.createElement('h4'); h.textContent = e.at; box.appendChild(h);
+      for (const d of e.imgs) {
+        const im = document.createElement('img');
+        im.src = 'data:image/jpeg;base64,' + d;
+        im.style.cssText = 'display:block;max-width:100%;border:2px solid #7b3fe4;margin:4px 0';
+        box.appendChild(im);
+      }
+      const pre = document.createElement('pre');
+      pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;background:#f3f0fa;padding:8px;border-radius:8px';
+      pre.textContent = e.task + '\n\n' + e.reply;
+      box.appendChild(pre);
+    }
+    document.documentElement.appendChild(box);
+  }
+
   async function geminiRequest(piece, apiKey, imagePart, model = GEMINI_MODEL) {
     // Economy mode asks for the least thinking and a lower image resolution. If this model
     // rejects either option, drop it, remember that, and try again.
@@ -1098,6 +1138,7 @@
       store.set(KEY_UNSUPPORTED, JSON.stringify([...unsupported]));
       return geminiRequest(piece, apiKey, imagePart, model);
     }
+    noteSent(piece, imagePart, res);
     const um = res?.usageMetadata || {};
     countUsage({ calls: 1, inTok: um.promptTokenCount, outTok: (um.candidatesTokenCount || 0) + (um.thoughtsTokenCount || 0), cachedTok: um.cachedContentTokenCount });
     return parseGemini(res, piece);
