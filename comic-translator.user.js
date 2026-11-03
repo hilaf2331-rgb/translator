@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.7
+// @version      1.39.8
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -841,7 +841,50 @@
     throw err;
   }
 
+  // What we learned about the last picture we read, shown in ⚙ → 16.
+  let lastDiag = '';
+  function describe(el) {
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+    const src = kindOf(el) === 'img' ? (el.currentSrc || el.src) : kindOf(el) === 'bg' ? bgUrl(el) : '';
+    const { w, h } = naturalSize(el);
+    return `${el.tagName.toLowerCase()} ${w}x${h} shown ${Math.round(r.width)}x${Math.round(r.height)}` +
+      (src ? ` src=${src.slice(0, 90)}` : '') +
+      (cs.filter !== 'none' ? ` filter=${cs.filter}` : '') + (cs.mixBlendMode !== 'normal' ? ` blend=${cs.mixBlendMode}` : '') +
+      (cs.opacity !== '1' ? ` opacity=${cs.opacity}` : '') + (cs.backgroundImage !== 'none' ? ' +bg' : '');
+  }
+  // Other pictures drawn at the same spot (a site can show the real picture in one element and
+  // keep a dark copy or a placeholder in another).
+  function samePlace(el) {
+    const r = el.getBoundingClientRect();
+    const out = [];
+    for (const o of [...deepQuery(document, 'img, canvas'), el.parentElement, el.parentElement?.parentElement]) {
+      if (!o || o === el || o.closest?.('.ct-layer, #ct-ui')) continue;
+      if (!(o instanceof HTMLImageElement || o instanceof HTMLCanvasElement) && !bgUrl(o)) continue;
+      const q = o.getBoundingClientRect();
+      const ix = Math.min(r.right, q.right) - Math.max(r.left, q.left);
+      const iy = Math.min(r.bottom, q.bottom) - Math.max(r.top, q.top);
+      if (ix > 0.8 * r.width && iy > 0.8 * r.height && q.width < 1.25 * r.width && q.height < 1.25 * r.height) out.push(o);
+    }
+    return out;
+  }
+
   async function loadBitmap(el) {
+    const bmp = await loadOwnBitmap(el);
+    if (!looksBlank(bmp)) { lastDiag = describe(el); return bmp; }
+    const notes = [describe(el) + ' → black'];
+    for (const o of samePlace(el)) {
+      try {
+        const alt = await loadOwnBitmap(o);
+        const ok = !looksBlank(alt) && Math.abs(alt.width / alt.height - bmp.width / bmp.height) < 0.1 * (bmp.width / bmp.height);
+        notes.push(describe(o) + (ok ? ' → used' : ' → no'));
+        if (ok) { lastDiag = notes.join('\n'); return alt; }
+      } catch (err) { notes.push(describe(o) + ' → ' + err.message); }
+    }
+    lastDiag = notes.join('\n');
+    return bmp;
+  }
+
+  async function loadOwnBitmap(el) {
     switch (kindOf(el)) {
       case 'img':
         if (isReadable(el)) {
@@ -1133,7 +1176,7 @@
     const cand = res?.candidates?.[0];
     lastSent.unshift({
       at: new Date().toLocaleTimeString('he-IL'),
-      task: buildTask(piece).slice(0, 400),
+      task: lastDiag + '\n\n' + buildTask(piece).slice(0, 300),
       imgs: [...(piece.batch ? piece.batch.map((p) => p.data) : [imagePart.inlineData?.data]), ...(piece.ctx || []).map((c) => c.data)].filter(Boolean),
       reply: `finish: ${cand?.finishReason || '-'}${res?.promptFeedback?.blockReason ? ' / block: ' + res.promptFeedback.blockReason : ''}\n` +
         (cand?.content?.parts || []).filter((p) => p.text && !p.thought).map((p) => p.text).join('').slice(0, 2500),
