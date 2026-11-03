@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.8
+// @version      1.39.9
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -765,9 +765,40 @@
     c.getContext('2d').drawImage(source, 0, 0, w, h);
     return createImageBitmap(c);
   }
+  // What kind of file a picture is (for ⚙ → 16): type, size, and whether it's animated. An
+  // animated picture is drawn by Safari on the page at its current frame, but read by us at its
+  // first frame, which can be black (a panel that fades in).
+  let lastFileInfo = '';
+  async function fileInfo(blob) {
+    try {
+      const b = new Uint8Array(await blob.slice(0, Math.min(blob.size, 200000)).arrayBuffer());
+      const str = (i, n) => String.fromCharCode(...b.subarray(i, i + n));
+      let kind = str(0, 4) === 'RIFF' && str(8, 4) === 'WEBP' ? 'webp' : str(1, 3) === 'PNG' ? 'png' : str(0, 3) === 'GIF' ? 'gif'
+        : b[0] === 0xff && b[1] === 0xd8 ? 'jpeg' : str(4, 8).startsWith('ftyp') ? 'avif/heic:' + str(8, 4) : b[0] === 0xff && b[1] === 0x0a ? 'jxl' : '?';
+      const text = String.fromCharCode(...b.subarray(0, Math.min(b.length, 4096)));
+      const anim = (kind === 'webp' && text.includes('ANIM')) || (kind === 'png' && text.includes('acTL')) ? ' animated' : '';
+      return `file: ${blob.type || '-'} ${kind}${anim} ${Math.round(blob.size / 1024)}KB`;
+    } catch (_) { return ''; }
+  }
+  // The last frame of an animated picture, where the browser can decode frames (ImageDecoder).
+  async function lastFrame(blob) {
+    if (!('ImageDecoder' in window)) return null;
+    try {
+      const dec = new ImageDecoder({ data: await blob.arrayBuffer(), type: blob.type || 'image/webp' });
+      await dec.tracks.ready;
+      const n = dec.tracks.selectedTrack?.frameCount || 1;
+      const { image } = await dec.decode({ frameIndex: n - 1 });
+      const bmp = await createImageBitmap(image);
+      image.close?.(); dec.close?.();
+      return bmp;
+    } catch (_) { return null; }
+  }
   async function decodeBlob(blob) {
     const bmp = await createImageBitmap(blob);
     if (!looksBlank(bmp)) return bmp;
+    lastFileInfo = await fileInfo(blob) + ('ImageDecoder' in window ? ' (decoder: yes)' : ' (decoder: no)');
+    const fr = await lastFrame(blob);
+    if (fr && !looksBlank(fr)) return fr;
     const url = URL.createObjectURL(blob);
     try {
       const im = new Image();
@@ -880,7 +911,7 @@
         if (ok) { lastDiag = notes.join('\n'); return alt; }
       } catch (err) { notes.push(describe(o) + ' → ' + err.message); }
     }
-    lastDiag = notes.join('\n');
+    lastDiag = notes.join('\n') + (lastFileInfo ? '\n' + lastFileInfo : '');
     return bmp;
   }
 
