@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.0
+// @version      1.39.1
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -156,6 +156,25 @@
   // Settings a model turned out not to accept, remembered so we stop sending them.
   const KEY_UNSUPPORTED = 'unsupportedOptions';
   const unsupported = new Set(JSON.parse(await store.get(KEY_UNSUPPORTED, '[]')));
+
+  // A translation the safety filter partly refused is kept too (asking again costs money and is
+  // refused again), but only for the filter setting it was made with: switching ⚙ → 10 retries it.
+  function keep(k, b, extra) {
+    cache[k] = { t: Date.now(), b, ...extra, ...(b.blocked ? { blocked: b.blocked, f: relaxedSexFilter ? 1 : 0 } : {}) };
+  }
+  function cached(k) {
+    const hit = cache[k];
+    if (hit?.blocked && hit.f !== (relaxedSexFilter ? 1 : 0)) { delete cache[k]; return null; }
+    return hit;
+  }
+  function reuse(seen, bitmap) {
+    seen.t = Date.now();
+    const again = seen.b.map((b) => ({ ...b }));
+    makePatches(bitmap, again);
+    Object.defineProperty(again, 'reused', { value: true });
+    if (seen.blocked) again.blocked = seen.blocked;
+    return again;
+  }
 
   function saveCache() {
     const keys = Object.keys(cache);
@@ -448,7 +467,7 @@
           : 'מסנן רגיל (ברירת המחדל של Google).');
         for (const el of nearView) {
           const status = layers.get(el)?.layer.querySelector('.ct-status')?.textContent || '';
-          if (status.includes('נחסם')) state.delete(el); // blocked pages weren't cached: try again
+          if (status.includes('נחסם')) state.delete(el); // kept for the other filter setting only: try again
         }
         nearView.forEach((el) => check(el));
       }
@@ -1428,18 +1447,12 @@
     // Some sites give the same picture a new address on every visit, which would translate (and
     // bill) it again. Recognise it by what it looks like instead.
     const fp = fingerprint(bitmap);
-    const seen = fp && cache[fp];
-    if (seen) {
-      seen.t = Date.now();
-      const again = seen.b.map((b) => ({ ...b }));
-      makePatches(bitmap, again);
-      Object.defineProperty(again, 'reused', { value: true });
-      return again;
-    }
+    const seen = fp && cached(fp);
+    if (seen) return reuse(seen, bitmap);
     const out = await translateBitmap(bitmap, apiKey, contextBefore(el), await picturesAround(el));
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
-    if (fp && !out.blocked) cache[fp] = { t: Date.now(), b: out };
+    if (fp) keep(fp, out);
     return out;
   }
 
@@ -1460,14 +1473,8 @@
         try {
           const bitmap = await loadBitmap(el);
           const fp = fingerprint(bitmap);
-          const seen = fp && cache[fp];
-          if (seen) {
-            seen.t = Date.now();
-            const again = seen.b.map((b) => ({ ...b }));
-            makePatches(bitmap, again);
-            Object.defineProperty(again, 'reused', { value: true });
-            return settle[i].res(again);
-          }
+          const seen = fp && cached(fp);
+          if (seen) return settle[i].res(reuse(seen, bitmap));
           const sliced = slice(bitmap);
           if (sliced.pieces.length !== 1) return solo(i); // tall strips go on their own
           items.push({ i, bitmap, fp, sliced });
@@ -1489,7 +1496,7 @@
           const out = await translateBitmap(it.bitmap, apiKey, '', {}, { sliced: it.sliced, results: [mine] });
           markEdges(out, it.bitmap.height);
           makePatches(it.bitmap, out);
-          if (it.fp && !out.blocked) cache[it.fp] = { t: Date.now(), b: out };
+          if (it.fp) keep(it.fp, out);
           settle[it.i].res(out);
         } catch (err) { settle[it.i].rej(err); }
       });
@@ -1720,7 +1727,7 @@
   const waitingSeams = new Set();
   function scheduleSeam(sm) {
     if (sm.state) return;
-    const hit = cache['seam:' + sm.key];
+    const hit = cached('seam:' + sm.key);
     if (hit) {
       sm.state = 'done'; sm.fa = hit.fa; sm.fb = hit.fb;
       drawBubbles(sm, hit.b);
@@ -1738,7 +1745,7 @@
     sm.state = 'pending';
     translateSeam(sm)
       .then((res) => {
-        if (!res.blocked) { cache['seam:' + sm.key] = { t: Date.now(), b: res.b, fa: res.fa, fb: res.fb }; saveCache(); }
+        keep('seam:' + sm.key, Object.assign(res.b, { blocked: res.blocked }), { fa: res.fa, fb: res.fb }); saveCache();
         sm.state = 'done'; sm.fa = res.fa; sm.fb = res.fb;
         if (enabled) { drawBubbles(sm, res.b); redrawPair(sm); }
       })
@@ -2385,10 +2392,10 @@
     const cur = state.get(el);
     if (cur && cur.key === key && !(cur.error && retryErrors)) return;
     state.set(el, { key });
-    const hit = cache[key];
+    const hit = cached(key);
     if (hit) {
       hit.t = Date.now();
-      setStatus(el, null);
+      setStatus(el, hit.blocked || null);
       drawBubbles(el, hit.b);
       if (hit.b.length && !hit.b.some((b) => b.patch)) {
         loadBitmap(el).then((bmp) => {
@@ -2477,10 +2484,8 @@
     return promise
       .then((bubbles) => {
         if (bubbles.reused) usage.dayPics--; else countUsage({ pics: 1 });
-        if (!bubbles.blocked) { // blocked pages can be retried later, so don't keep them
-          cache[key] = { t: Date.now(), b: bubbles };
-          saveCache();
-        }
+        keep(key, bubbles);
+        saveCache();
         if (!enabled || state.get(el)?.key !== key) return;
         setStatus(el, bubbles.blocked || null);
         drawBubbles(el, bubbles);
