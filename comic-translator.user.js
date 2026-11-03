@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.39.3
+// @version      1.39.5
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -85,6 +85,7 @@
   const KEY_TAP = 'tapMode';
   let tapMode = (await store.get(KEY_TAP, 'auto')) === 'tap';
   const requested = new WeakSet(); // pictures you asked to translate
+  const forced = new WeakSet(); // tapped again after coming back empty: translate alone, from scratch
   const KEY_ECONOMY = 'economy';
   let economy = !!(await store.get(KEY_ECONOMY, false));
   const KEY_SOURCE = 'sourceLang';
@@ -393,7 +394,7 @@
         '1'
       );
       if (choice === '1') askForKey();
-      else if (choice === '2') { cache = {}; saveCache(); exhausted = {}; store.set(KEY_EXHAUSTED, '{}'); alert('נוקה.'); }
+      else if (choice === '2') { cache = {}; saveCache(); exhausted = {}; store.set(KEY_EXHAUSTED, '{}'); if (enabled) { stopAll(); startWatching(); } alert('נוקה.'); }
       else if (choice === '3') { ui.dataset.hiddenByUser = '1'; ui.remove(); }
       else if (choice === '4') askForProxy();
       else if (choice === '5') askForFont();
@@ -1453,9 +1454,16 @@
     // Some sites give the same picture a new address on every visit, which would translate (and
     // bill) it again. Recognise it by what it looks like instead.
     const fp = fingerprint(bitmap);
-    const seen = fp && cached(fp);
+    const seen = fp && !forced.has(el) && cached(fp);
     if (seen) return reuse(seen, bitmap);
-    const out = await translateBitmap(bitmap, apiKey, contextBefore(el), await picturesAround(el));
+    const around = forced.has(el) ? {} : await picturesAround(el);
+    let out = await translateBitmap(bitmap, apiKey, forced.has(el) ? '' : contextBefore(el), around);
+    // Nothing found although the neighbours' strip was sent along: the model sometimes takes the
+    // picture's own bubble for one in that strip (which it must skip). Look once more without it.
+    if (!out.length && !out.blocked && around.around) {
+      const again = await translateBitmap(bitmap, apiKey, contextBefore(el), {});
+      if (again.length || again.blocked) out = again;
+    }
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
     if (fp) keep(fp, out);
@@ -2381,6 +2389,7 @@
       b.addEventListener('click', (e) => {
         e.preventDefault(); e.stopPropagation();
         lastActive = Date.now();
+        if (requested.has(el)) { forced.add(el); delete cache[keyOf(el)]; } // asked again: don't reuse the empty result
         requested.add(el);
         state.delete(el);
         check(el);
@@ -2407,6 +2416,7 @@
       hit.t = Date.now();
       setStatus(el, hit.blocked || null);
       drawBubbles(el, hit.b);
+      if (tapMode && !hit.b.length) showTap(el);
       if (hit.b.length && !hit.b.some((b) => b.patch)) {
         loadBitmap(el).then((bmp) => {
           if (state.get(el)?.key !== key) return;
@@ -2498,8 +2508,10 @@
         saveCache();
         if (!enabled || state.get(el)?.key !== key) return;
         // A picture you tapped that came back with nothing: say it was looked at.
-        setStatus(el, bubbles.blocked || (tapMode && requested.has(el) && !bubbles.length ? 'לא נמצא טקסט בתמונה הזו' : null));
+        forced.delete(el);
+        setStatus(el, bubbles.blocked || null);
         drawBubbles(el, bubbles);
+        if (tapMode && !bubbles.length) showTap(el); // nothing found: can be asked again
       })
       .catch((err) => {
         console.warn('[comic-translator]', err);
@@ -2551,7 +2563,7 @@
       // Neighbours right below that are waiting too go along in the same request.
       const group = [{ el, key }];
       let prev = el.getBoundingClientRect();
-      while (group.length < BATCH_MAX) {
+      while (!forced.has(el) && group.length < BATCH_MAX) {
         // the waiting picture that starts closest below the last one, in the same column
         let qi = -1, top = Infinity;
         queue.forEach((q, i) => {
@@ -2561,7 +2573,7 @@
         });
         if (qi < 0) break;
         const mate = queue[qi];
-        if (state.get(mate.el)?.key !== mate.key || !admit(mate.el, mate.key)) break;
+        if (forced.has(mate.el) || state.get(mate.el)?.key !== mate.key || !admit(mate.el, mate.key)) break;
         queue.splice(qi, 1);
         group.push(mate);
         prev = mate.el.getBoundingClientRect();
