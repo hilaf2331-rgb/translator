@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.2
+// @version      1.40.3
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -913,6 +913,9 @@
       `senpai = סנפאי, -kun = -קון, -chan = -צ'אן, -san = -סאן. This is only for the Korean/Japanese word itself ` +
       `written in the original; English words are translated into plain ${TARGET_LANG} as usual (never turn "senior" ` +
       `into סונבה or "brother" into היונג: "senior" is "בכיר" / "מהשנה מעליי" / "הוותיק", "brother" is "אח", "sir" is "אדוני"). ` +
+      `In BL, "top" and "bottom" as roles in sex or in a couple stay as fans say them: "טופ" and "בוטום" ` +
+      `("I'm a top" is "אני טופ", "are you a bottom?" is "אתה בוטום?"), never "אקטיבי" / "פסיבי"; "switch" in that sense is ` +
+      `"סוויץ'", and seme / uke are "סמה" / "אוקה". Other uses of top and bottom are translated as usual. ` +
       `"Just like that" is "בדיוק ככה" (that's the way) or "פשוט ככה" / "ככה פתאום" (it suddenly happened), ` +
       `never "ככה סתם", which means "for no reason". "In any way" is "בשום צורה" only in a negative sentence ` +
       `("not in any way"); otherwise it's "בכל מקרה" / "בכל דרך". ` +
