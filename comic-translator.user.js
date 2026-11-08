@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.6
+// @version      1.40.7
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -946,6 +946,7 @@
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
         : `Translate profanity, insults and crude slang faithfully, with the same intensity as the original ` +
           `(natural ${TARGET_LANG} swearing, not softened or censored); this is fiction for an adult reader. `) +
+      `A bubble's text is one entry with one box over all of its lines, from the first line to the last (never leave out a line). ` +
       `If a bubble is cut off by the top or bottom edge of the image, still return the box of its visible part. ` +
       `If the image is not a comic or has no such text, return an empty list.`
     );
@@ -1542,8 +1543,32 @@
     const out = await translateBitmap(bitmap, apiKey, forced.has(el) ? '' : contextBefore(el), around);
     markEdges(out, bitmap.height);
     makePatches(bitmap, out);
+    await fillMissed(bitmap, out, apiKey);
     if (fp) keep(fp, out);
     return out;
+  }
+
+  // A bubble whose box turned out to miss a line (see makePatches): translate that bubble again,
+  // whole, so the missed words are in the translation too. Rare, so it costs little.
+  async function fillMissed(bitmap, out, apiKey) {
+    const grown = out.filter((b) => b.grew);
+    if (!grown.length) return;
+    const { crop, sentW, sentH } = slice(bitmap);
+    for (const g of grown) {
+      try {
+        const gx = g.x * sentW, gy = g.y * sentH, gw = g.w * sentW, gh = g.h * sentH;
+        const pad = Math.max(60, gh * 0.6);
+        const y0 = Math.max(0, Math.round(gy - pad)), y1 = Math.min(sentH, Math.round(gy + gh + pad));
+        const piece = crop(y0, y1 - y0);
+        let best = null, bestA = 0;
+        for (const r of await translatePiece(piece, apiKey)) {
+          const ix = Math.min(gx + gw, r.x + r.w) - Math.max(gx, r.x), iy = Math.min(gy + gh, y0 + r.y + r.h) - Math.max(gy, y0 + r.y);
+          const a = Math.max(0, ix) * Math.max(0, iy);
+          if (a > bestA) { bestA = a; best = r; }
+        }
+        if (best && bestA > 0.3 * gw * gh) { g.t = best.translation; g.n = Math.max(g.n || 1, best.lines || 1); }
+      } catch (_) { /* keep what we have */ }
+    }
   }
 
   // Many sites cut a chapter into a hundred small pictures. Sending each on its own repeats all
@@ -1586,6 +1611,7 @@
           const out = await translateBitmap(it.bitmap, apiKey, '', {}, { sliced: it.sliced, results: [mine] });
           markEdges(out, it.bitmap.height);
           makePatches(it.bitmap, out);
+          await fillMissed(it.bitmap, out, apiKey);
           if (it.fp) keep(it.fp, out);
           settle[it.i].res(out);
         } catch (err) { settle[it.i].rej(err); }
@@ -2063,27 +2089,52 @@
           let front = [];
           // Only shapes that reach into the text box (a little wider; a whole line above and below)
           // are letters: a nose or a mouth drawn right next to the text isn't.
-          const lh = bh / Math.max(1, b.n || 1);
+          const cand = new Uint8Array(N);
+          for (let i = 0; i < N; i++) if (ink[i] && !keep[i] && letterTest(i)) cand[i] = 1;
+          // The real height of a line, from the letters in the box (the model's box sometimes covers
+          // only some of the lines): a missed line right above or below is still erased.
+          let lh = bh / Math.max(1, b.n || 1);
+          {
+            const hs = [], seenH = new Uint8Array(N);
+            for (let s0 = 0; s0 < N; s0++) {
+              if (!cand[s0] || seenH[s0] || !inBox(s0)) continue;
+              let top = h, bot = 0, n = 0;
+              const st3 = [s0];
+              seenH[s0] = 1;
+              while (st3.length) {
+                const i = st3.pop(), x = i % w, y = (i - x) / w;
+                top = Math.min(top, y); bot = Math.max(bot, y); n++;
+                for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+                  if (j < 0 || j >= N || !cand[j] || seenH[j]) continue;
+                  seenH[j] = 1; st3.push(j);
+                }
+              }
+              if (n >= 6) hs.push(bot - top + 1);
+            }
+            if (hs.length >= 3) lh = Math.max(lh, hs.sort((p, q) => p - q)[hs.length >> 1] * 1.6);
+          }
           const ex0 = bx0 - Math.round((bx1 - bx0) * 0.05) - 5, ex1 = bx1 + Math.round((bx1 - bx0) * 0.05) + 5;
           const ey0 = by0 - Math.round(lh * 1.4), ey1 = by1 + Math.round(lh * 1.4);
           const nearText = (i) => { const x = i % w, y = (i - x) / w; return x >= ex0 && x < ex1 && y >= ey0 && y < ey1; };
-          const cand = new Uint8Array(N);
-          for (let i = 0; i < N; i++) if (ink[i] && !keep[i] && letterTest(i)) cand[i] = 1;
+          // Text of another bubble nearby is that bubble's: never taken for a missed line of this one.
+          const others = bubbles.filter((o) => o !== b).map((o) => [o.x * W - x0, o.y * H - y0, (o.x + o.w) * W - x0, (o.y + o.h) * H - y0]);
+          const inOther = (i) => { const x = i % w, y = (i - x) / w; return others.some(([a0, b0, a1, b1]) => x >= a0 && x < a1 && y >= b0 && y < b1); };
           const seenC = new Uint8Array(N);
           for (let s0 = 0; s0 < N; s0++) {
             if (!cand[s0] || seenC[s0]) continue;
             const comp = [s0], st2 = [s0];
             seenC[s0] = 1;
-            let hitsText = false;
+            let hitsText = false, other = false;
             while (st2.length) {
               const i = st2.pop(), x = i % w;
               if (!hitsText && nearText(i)) hitsText = true;
+              if (!other && !inBox(i) && inOther(i)) other = true;
               for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
                 if (j < 0 || j >= N || !cand[j] || seenC[j]) continue;
                 seenC[j] = 1; st2.push(j); comp.push(j);
               }
             }
-            if (hitsText) for (const i of comp) { letter[i] = 1; front.push(i); }
+            if (hitsText && !other) for (const i of comp) { letter[i] = 1; front.push(i); }
           }
           const erased = front.length;
           for (let step = 0; step < 10 && front.length; step++) {
@@ -2214,6 +2265,21 @@
               }
             }
             if (was && still > was * 0.35) continue bubbles;
+          }
+          {
+            let lx0 = w, lx1 = -1, ly0 = h, ly1 = -1;
+            for (let i = 0; i < N; i++) {
+              if (!letter[i]) continue;
+              const x = i % w, y = (i - x) / w;
+              if (x < lx0) lx0 = x; if (x > lx1) lx1 = x; if (y < ly0) ly0 = y; if (y > ly1) ly1 = y;
+            }
+            // A whole line (or more) of letters outside the box: the model missed it.
+            if (ly1 >= 0 && (by0 - ly0 > lh * 0.6 || ly1 + 1 - by1 > lh * 0.6)) {
+              const nx0 = Math.min(bx0, lx0), nx1 = Math.max(bx1, lx1 + 1), ny0 = Math.min(by0, ly0), ny1 = Math.max(by1, ly1 + 1);
+              b.x = (x0 + nx0) / W; b.w = (nx1 - nx0) / W; b.y = (y0 + ny0) / H; b.h = (ny1 - ny0) / H;
+              b.n = Math.max(b.n || 1, Math.round((ny1 - ny0) / lh));
+              Object.defineProperty(b, 'grew', { value: true, enumerable: false, configurable: true, writable: true });
+            }
           }
           g.putImageData(img, 0, 0);
           done.push({ b, c, g, x0, y0, w, h });
