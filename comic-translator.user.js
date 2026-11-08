@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.5
+// @version      1.40.6
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -891,6 +891,7 @@
       `Without nikud some Hebrew words read as something else; when the right meaning isn't obvious from the line, ` +
       `add a word or pick another phrasing ("You're the guarantor" is "אתה הערב על ההלוואה" or "אתה זה שחתם כערב", ` +
       `not just "אתה הערב", which reads like "the evening"). ` +
+      `Spell every ${TARGET_LANG} word correctly (read each word once more before answering: no extra or missing letters). ` +
       `Use only real, everyday ${TARGET_LANG} words: never invent a word or a verb form. If you're not sure a form ` +
       `exists, say it more simply (e.g. "bathe in the sun" is "להשתזף" or "לשבת קצת בשמש"). ` +
       `Use a slang word only when its meaning matches the original exactly (e.g. "unhinged" is מטורף / פסיכי / ` +
@@ -1278,6 +1279,8 @@
     if (/^\s*(פוו?אח|פווה|בוואח|פואה)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'האח');
     if (/^\s*([.…]*)\s*(פפוף|שיש|שייש|שיישש)([.!?…]*)\s*$/.test(t)) return t.replace(/[\u05D0-\u05EA]+/, 'אוף');
     t = t.replace(/ו?ורק[והא]{0,2}ה?וליק(ית)?/g, (m, f) => (f ? 'מכורה לעבודה' : 'מכור לעבודה'));
+    // Typos the model has made in common words ("שלרקחתי" for "שלקחתי").
+    t = t.replace(/(^|[^\u05D0-\u05EA])([ושהכלמב]{0,2})לרקח(תי|ת|נו|תם|תן|ו)(?![\u05D0-\u05EA])/g, '$1$2לקח$3');
     return t
       .replace(/(^|[^A-Za-z])[A-Za-z]{1,2}(?=[\u05D0-\u05EA])/g, '$1')
       .replace(/([\u05D0-\u05EA])[A-Za-z]{1,2}(?=$|[^A-Za-z])/g, '$1');
