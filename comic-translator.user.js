@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.4
+// @version      1.40.5
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -2195,6 +2195,23 @@
             }
           }
           if (!touching && before && after > before * 0.35) continue bubbles;
+          if (touching) {
+            // Here strokes of the art touching the letters are kept on purpose, so look only at the
+            // middle of the text box, where there are only letters: if they're still there (e.g. white
+            // letters with a dark outline), use the plain box.
+            const qx0 = bx0 + ((bx1 - bx0) >> 2), qx1 = bx1 - ((bx1 - bx0) >> 2);
+            const qy0 = by0 + ((by1 - by0) >> 2), qy1 = by1 - ((by1 - by0) >> 2);
+            let was = 0, still = 0;
+            for (let y = qy0; y < qy1; y++) {
+              for (let x = qx0; x < qx1; x++) {
+                const i = y * w + x, k = i * 4;
+                if (diff[i] <= T) continue;
+                was++;
+                if (Math.abs(d[k] - R) + Math.abs(d[k + 1] - G) + Math.abs(d[k + 2] - B) > T) still++;
+              }
+            }
+            if (was && still > was * 0.35) continue bubbles;
+          }
           g.putImageData(img, 0, 0);
           done.push({ b, c, g, x0, y0, w, h });
           break;
