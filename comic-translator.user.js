@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Comic Translator (EN → HE)
 // @namespace    https://github.com/hilaf2331-rgb/translator
-// @version      1.40.3
+// @version      1.40.4
 // @updateURL    https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @downloadURL  https://raw.githubusercontent.com/hilaf2331-rgb/translator/main/comic-translator.user.js
 // @description  Translates speech bubbles in comics / webtoons into Hebrew with Gemini (or Claude), drawn right on top of the images. Works on any site.
@@ -936,6 +936,10 @@
       `Do not assume a man and a woman: many comics (e.g. BL or GL) are about two men or two women. ` +
       `Use the characters' names and how they are drawn; the person spoken to is often drawn in the panel the bubble's ` +
       `tail points to, above or below the bubble, so look there too. Only when there is no clue at all, use masculine forms. ` +
+      `Korean names written in English letters are spelled in Hebrew the way the name is said in Korean, not letter by ` +
+      `letter: "ae" is said "e" (Jaemin = ג'מין, Taehyun = טהיון), "eo" is said "o" (Seojun = סוג'ון, Jeongwoo = ג'ונגוו), ` +
+      `"eu" is said "u" (Eunho = אונהו, Seungmin = סונגמין), "ui" after another syllable is said "i", so "Taeui" sounds like ` +
+      `"Tay" = טיי; "j" is ג', "ch" is צ'. Japanese and Chinese names likewise as they are said. ` +
       `In "names", list every person or place name you wrote in Hebrew (original spelling and Hebrew spelling). ` +
       (softenSwears
         ? `Tone down profanity and crude slang to mild ${TARGET_LANG} expressions, keeping the emotion. `
